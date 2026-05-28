@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
+	skillutil "aletheia/internal/skills"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -82,9 +84,19 @@ type TrajectoryRecord struct {
 	Selected           bool    `json:"selected"`
 }
 
+type Skill struct {
+	ID             int64
+	Name           string
+	Trigger        string
+	ActionSequence []string
+	SuccessRate    float64
+	CreatedAt      time.Time
+}
+
 type InspectStats struct {
 	Documents   int
 	Chunks      int
+	Skills      int
 	Nodes       int
 	Edges       int
 	LatestPaths []string
@@ -355,6 +367,105 @@ func (s *Store) RecordSelectorExample(ctx context.Context, episodeID int64, labe
 	return s.EnsureNode(ctx, "selector_example", label, payload)
 }
 
+func (s *Store) UpsertSkill(ctx context.Context, skill Skill) (Skill, error) {
+	if skill.Name == "" {
+		return Skill{}, fmt.Errorf("skill name is required")
+	}
+	if skill.Trigger == "" {
+		return Skill{}, fmt.Errorf("skill trigger is required")
+	}
+	if skill.SuccessRate == 0 {
+		skill.SuccessRate = 1
+	}
+	sequence, err := skillutil.MarshalActionSequence(skill.ActionSequence)
+	if err != nil {
+		return Skill{}, err
+	}
+
+	var id int64
+	var createdAt string
+	err = s.db.QueryRowContext(ctx, `
+SELECT id, created_at FROM skills WHERE name = ? AND trigger = ? ORDER BY id LIMIT 1
+`, skill.Name, skill.Trigger).Scan(&id, &createdAt)
+	if err == nil {
+		if _, err := s.db.ExecContext(ctx, `
+UPDATE skills SET action_sequence = ?, success_rate = ? WHERE id = ?
+`, sequence, skill.SuccessRate, id); err != nil {
+			return Skill{}, err
+		}
+		skill.ID = id
+		if ts, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			skill.CreatedAt = ts
+		}
+		return skill, nil
+	}
+	if err != sql.ErrNoRows {
+		return Skill{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `
+INSERT INTO skills(name, trigger, action_sequence, success_rate, created_at)
+VALUES (?, ?, ?, ?, ?)
+`, skill.Name, skill.Trigger, sequence, skill.SuccessRate, now)
+	if err != nil {
+		return Skill{}, err
+	}
+	id, err = res.LastInsertId()
+	if err != nil {
+		return Skill{}, err
+	}
+	skill.ID = id
+	if ts, err := time.Parse(time.RFC3339Nano, now); err == nil {
+		skill.CreatedAt = ts
+	}
+	return skill, nil
+}
+
+func (s *Store) BestSkillByTrigger(ctx context.Context, trigger string) (Skill, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, name, trigger, action_sequence, success_rate, created_at
+FROM skills
+WHERE trigger = ?
+ORDER BY success_rate DESC, id ASC
+LIMIT 1
+`, trigger)
+	skill, err := scanSkill(row)
+	if err == sql.ErrNoRows {
+		return Skill{}, false, nil
+	}
+	if err != nil {
+		return Skill{}, false, err
+	}
+	return skill, true, nil
+}
+
+func (s *Store) ListSkills(ctx context.Context) ([]Skill, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, name, trigger, action_sequence, success_rate, created_at
+FROM skills
+ORDER BY success_rate DESC, id ASC
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Skill
+	for rows.Next() {
+		skill, err := scanSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, skill)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateSkillSuccessRate(ctx context.Context, skillID int64, successRate float64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE skills SET success_rate = ? WHERE id = ?`, successRate, skillID)
+	return err
+}
+
 func (s *Store) Chunks(ctx context.Context) ([]Chunk, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT c.id, c.document_id, d.path, c.offset_start, c.offset_end, c.text, COALESCE(c.embedding_id, ''), d.updated_at
@@ -412,6 +523,7 @@ func (s *Store) Inspect(ctx context.Context, latestLimit int) (InspectStats, err
 	}{
 		{&stats.Documents, `SELECT COUNT(*) FROM documents`},
 		{&stats.Chunks, `SELECT COUNT(*) FROM chunks`},
+		{&stats.Skills, `SELECT COUNT(*) FROM skills`},
 		{&stats.Nodes, `SELECT COUNT(*) FROM nodes`},
 		{&stats.Edges, `SELECT COUNT(*) FROM edges`},
 	} {
@@ -471,6 +583,28 @@ func (s *Store) clearGraphForDocument(ctx context.Context, documentID int64) err
 		}
 	}
 	return nil
+}
+
+type skillScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSkill(row skillScanner) (Skill, error) {
+	var skill Skill
+	var sequence string
+	var createdAt string
+	if err := row.Scan(&skill.ID, &skill.Name, &skill.Trigger, &sequence, &skill.SuccessRate, &createdAt); err != nil {
+		return Skill{}, err
+	}
+	actions, err := skillutil.UnmarshalActionSequence(sequence)
+	if err != nil {
+		return Skill{}, err
+	}
+	skill.ActionSequence = actions
+	if ts, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+		skill.CreatedAt = ts
+	}
+	return skill, nil
 }
 
 func parseTimes(doc *Document, createdAt string, updatedAt string) {

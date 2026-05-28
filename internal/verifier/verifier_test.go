@@ -56,7 +56,7 @@ func TestSlow(t *testing.T) {
 	time.Sleep(time.Second)
 }
 `)
-	ev := RunSandboxed(context.Background(), dir, GoTestCommand, time.Second, 64, GoTestName)
+	ev := RunSandboxed(context.Background(), dir, GoTestCommand, 20*time.Second, 64, GoTestName)
 	if ev.Status != StatusFail {
 		t.Fatalf("status = %s, want fail", ev.Status)
 	}

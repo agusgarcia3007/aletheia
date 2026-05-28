@@ -56,3 +56,14 @@
 - Persist selector examples from beam as `selector_example` graph nodes without adding a SQLite migration.
 - Extend bootstrap eval with an A/B where candidate-greedy fails and the learned selector passes.
 - Attach verifier status to trace entries only when that action actually produced new verifier evidence.
+
+## Milestone 7
+
+- Implement skill compression as a verified solver post-process instead of adding `<ACT_COMPRESS_SKILL>` to the VM action set.
+- Keep skill reuse opt-in through `solve --use-skills`; normal `solve`, learned selector, and beam behavior remain unchanged by default.
+- Use the deterministic trigger `go_test:calculator_return_subtract` for the current `examples/buggy-go` case and detect it before mutating the repository.
+- Store skills in the existing `skills` table with JSON action sequences and no SQLite migration.
+- Compress only verified traces into `fix_simple_go_test_failure` with `<ACT_PARSE_CODE>`, `<ACT_MUTATE_CODE>`, `<ACT_VERIFY>`, and `<ACT_RESPOND>`.
+- On failed skill reuse, restore touched files, set the skill success rate to `0`, and fall back to the normal solver path.
+- Report skill reuse explicitly in CLI output with `skill: <name>`, `initial verifier: skipped`, and `tool_calls`.
+- Extend bootstrap eval with `skill_reuse_cost_reduction` so the learned skill must pass with fewer verifier tool calls than the baseline solve.

@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"aletheia/internal/selector"
+	"aletheia/internal/skills"
 )
 
 func TestMigrateAndRecordEvidence(t *testing.T) {
@@ -202,6 +205,64 @@ func TestRecordSelectorExampleCreatesNode(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("selector_example nodes = %d, want 1", count)
+	}
+}
+
+func TestSkillsUpsertLookupListAndInspect(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := store.UpsertSkill(ctx, Skill{
+		Name:           skills.FixSimpleGoTestFailure,
+		Trigger:        skills.TriggerCalculatorSub,
+		ActionSequence: []string{selector.ActParseCode, selector.ActMutateCode, selector.ActVerify, selector.ActRespond},
+		SuccessRate:    1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.UpsertSkill(ctx, Skill{
+		Name:           skills.FixSimpleGoTestFailure,
+		Trigger:        skills.TriggerCalculatorSub,
+		ActionSequence: []string{selector.ActParseCode, selector.ActMutateCode, selector.ActVerify, selector.ActRespond},
+		SuccessRate:    0.75,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("upsert duplicated skill: first=%d second=%d", first.ID, second.ID)
+	}
+	got, ok, err := store.BestSkillByTrigger(ctx, skills.TriggerCalculatorSub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.ID != first.ID || got.SuccessRate != 0.75 {
+		t.Fatalf("skill lookup = %+v ok=%v", got, ok)
+	}
+	if err := store.UpdateSkillSuccessRate(ctx, got.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.ListSkills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].SuccessRate != 0 {
+		t.Fatalf("skills = %+v", list)
+	}
+	stats, err := store.Inspect(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Skills != 1 {
+		t.Fatalf("skills count = %d, want 1", stats.Skills)
 	}
 }
 

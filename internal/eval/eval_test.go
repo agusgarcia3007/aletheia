@@ -27,7 +27,7 @@ func TestRunBootstrapReportsBeamImprovement(t *testing.T) {
 	if !report.Improved() {
 		t.Fatalf("report = %+v, want beam improvement", report)
 	}
-	if len(report.Cases) != 2 {
+	if len(report.Cases) != 3 {
 		t.Fatalf("cases = %+v", report.Cases)
 	}
 	if report.Cases[0].CandidateGreedyStatus != "failed" || report.Cases[0].BeamStatus != "pass" {
@@ -35,6 +35,9 @@ func TestRunBootstrapReportsBeamImprovement(t *testing.T) {
 	}
 	if report.Cases[1].CandidateGreedyStatus != "failed" || report.Cases[1].LearnedSelectorStatus != "pass" {
 		t.Fatalf("learned selector case = %+v", report.Cases[1])
+	}
+	if report.Cases[2].SkillReuseStatus != "pass" || report.Cases[2].SkillToolCalls >= report.Cases[2].BaselineToolCalls {
+		t.Fatalf("skill reuse case = %+v", report.Cases[2])
 	}
 }
 

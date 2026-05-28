@@ -11,6 +11,7 @@ import (
 
 	"aletheia/internal/memory"
 	"aletheia/internal/selector"
+	skillpkg "aletheia/internal/skills"
 	"aletheia/internal/verifier"
 )
 
@@ -29,18 +30,22 @@ type Solver struct {
 	SearchStrategy  string
 	BeamWidth       int
 	MaxDepth        int
+	UseSkills       bool
 	VerifierNames   []string
 }
 
 type Result struct {
-	Task        Task
-	RepoPath    string
-	Initial     verifier.Evidence
-	Final       verifier.Evidence
-	Diff        string
-	Patched     bool
-	Trace       []TraceEntry
-	FinalStatus string
+	Task           Task
+	RepoPath       string
+	Initial        verifier.Evidence
+	Final          verifier.Evidence
+	Diff           string
+	Patched        bool
+	Trace          []TraceEntry
+	FinalStatus    string
+	SkillUsed      string
+	ToolCalls      int
+	InitialSkipped bool
 }
 
 func (s Solver) SolveFile(ctx context.Context, taskPath string, workingDir string) (Result, error) {
@@ -103,16 +108,71 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 		VerifierNames:   s.VerifierNames,
 	}
 	var state State
-	switch s.SearchStrategy {
-	case "", "greedy":
-		state, err = vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
-	case "beam":
-		state, err = s.runBeam(ctx, task, repoPath, planner, actionSelector, selectorProvided, vm)
-	default:
-		return Result{}, fmt.Errorf("unsupported search strategy %q", s.SearchStrategy)
+	var skillUsed string
+	initialSkipped := false
+	skillFailed := false
+	trigger, triggerOK, err := skillpkg.DetectTrigger(repoPath, task.Success)
+	if err != nil {
+		return Result{}, err
+	}
+	if s.UseSkills && triggerOK {
+		if skill, ok, err := store.BestSkillByTrigger(ctx, trigger); err != nil {
+			return Result{}, err
+		} else if ok && skill.SuccessRate > 0 {
+			snapshot, err := snapshotSkillFiles(repoPath, trigger)
+			if err != nil {
+				return Result{}, err
+			}
+			skillState, success, err := vm.RunSkill(ctx, task, repoPath, skill, s.MaxSteps)
+			if err != nil {
+				if restoreErr := restoreSkillFiles(snapshot); restoreErr != nil {
+					return Result{}, restoreErr
+				}
+				return Result{}, err
+			}
+			if success {
+				state = skillState
+				skillUsed = skill.Name
+				initialSkipped = true
+				if err := store.UpdateSkillSuccessRate(ctx, skill.ID, 1); err != nil {
+					return Result{}, err
+				}
+			} else {
+				if err := restoreSkillFiles(snapshot); err != nil {
+					return Result{}, err
+				}
+				skillFailed = true
+				if err := store.UpdateSkillSuccessRate(ctx, skill.ID, 0); err != nil {
+					return Result{}, err
+				}
+			}
+		}
+	}
+	if state.Goal == "" {
+		switch s.SearchStrategy {
+		case "", "greedy":
+			state, err = vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
+		case "beam":
+			state, err = s.runBeam(ctx, task, repoPath, planner, actionSelector, selectorProvided, vm)
+		default:
+			return Result{}, fmt.Errorf("unsupported search strategy %q", s.SearchStrategy)
+		}
 	}
 	if err != nil {
 		return Result{}, err
+	}
+	if !skillFailed && skillUsed == "" && triggerOK && (state.Verified || state.lastVerifierStatus() == "pass") {
+		if def, ok := skillpkg.Compress(traceActions(state.ActionTrace), true); ok {
+			def.Trigger = trigger
+			if _, err := store.UpsertSkill(ctx, memory.Skill{
+				Name:           def.Name,
+				Trigger:        def.Trigger,
+				ActionSequence: def.ActionSequence,
+				SuccessRate:    1,
+			}); err != nil {
+				return Result{}, err
+			}
+		}
 	}
 
 	reward := 0.0
@@ -131,18 +191,69 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 	}
 
 	result := Result{
-		Task:        task,
-		RepoPath:    repoPath,
-		Diff:        state.Diff,
-		Patched:     state.Verified,
-		Trace:       state.ActionTrace,
-		FinalStatus: state.FinalStatus,
+		Task:           task,
+		RepoPath:       repoPath,
+		Diff:           state.Diff,
+		Patched:        state.Verified,
+		Trace:          state.ActionTrace,
+		FinalStatus:    state.FinalStatus,
+		SkillUsed:      skillUsed,
+		ToolCalls:      state.ToolCalls,
+		InitialSkipped: initialSkipped,
 	}
 	if len(state.VerifierResults) > 0 {
 		result.Initial = state.VerifierResults[0]
 		result.Final = state.VerifierResults[len(state.VerifierResults)-1]
 	}
 	return result, nil
+}
+
+type skillFileSnapshot struct {
+	path string
+	mode os.FileMode
+	data []byte
+}
+
+func snapshotSkillFiles(repoPath string, trigger string) ([]skillFileSnapshot, error) {
+	files, ok := skillpkg.FilesForTrigger(trigger)
+	if !ok {
+		return nil, nil
+	}
+	snapshot := make([]skillFileSnapshot, 0, len(files))
+	for _, rel := range files {
+		path := filepath.Join(repoPath, rel)
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		snapshot = append(snapshot, skillFileSnapshot{
+			path: path,
+			mode: info.Mode().Perm(),
+			data: data,
+		})
+	}
+	return snapshot, nil
+}
+
+func restoreSkillFiles(snapshot []skillFileSnapshot) error {
+	for _, file := range snapshot {
+		if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func traceActions(trace []TraceEntry) []string {
+	actions := make([]string, 0, len(trace))
+	for _, entry := range trace {
+		actions = append(actions, string(entry.Action))
+	}
+	return actions
 }
 
 func unifiedDiff(path string, oldText string, newText string) string {

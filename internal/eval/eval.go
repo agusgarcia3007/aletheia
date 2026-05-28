@@ -26,6 +26,9 @@ type CaseResult struct {
 	CandidateGreedyStatus string
 	BeamStatus            string
 	LearnedSelectorStatus string
+	SkillReuseStatus      string
+	BaselineToolCalls     int
+	SkillToolCalls        int
 	Improved              bool
 }
 
@@ -60,6 +63,10 @@ func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
 	if err != nil {
 		return BootstrapReport{}, err
 	}
+	skillResult, err := runSkillReuseCostReduction(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
 	return BootstrapReport{
 		Suite: info,
 		Cases: []CaseResult{
@@ -74,6 +81,13 @@ func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
 				CandidateGreedyStatus: learnedResult.greedyStatus,
 				LearnedSelectorStatus: learnedResult.learnedStatus,
 				Improved:              learnedResult.improved,
+			},
+			{
+				Name:              "skill_reuse_cost_reduction",
+				SkillReuseStatus:  skillResult.skillStatus,
+				BaselineToolCalls: skillResult.baselineToolCalls,
+				SkillToolCalls:    skillResult.skillToolCalls,
+				Improved:          skillResult.improved,
 			},
 		},
 	}, nil
@@ -92,10 +106,13 @@ func (r BootstrapReport) Improved() bool {
 }
 
 type bootstrapComparison struct {
-	greedyStatus  string
-	beamStatus    string
-	learnedStatus string
-	improved      bool
+	greedyStatus      string
+	beamStatus        string
+	learnedStatus     string
+	skillStatus       string
+	baselineToolCalls int
+	skillToolCalls    int
+	improved          bool
 }
 
 func runCandidateGreedyVsBeam(ctx context.Context) (bootstrapComparison, error) {
@@ -196,6 +213,47 @@ func runLearnedSelectorVsCandidateGreedy(ctx context.Context, datasetPath string
 		greedyStatus:  passStatus(greedyPass),
 		learnedStatus: passStatus(learnedPass),
 		improved:      !greedyPass && learnedPass,
+	}, nil
+}
+
+func runSkillReuseCostReduction(ctx context.Context) (bootstrapComparison, error) {
+	root, taskPath, err := writeBootstrapBuggyRepo()
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	defer os.RemoveAll(root)
+	dbPath := filepath.Join(root, "skills.sqlite")
+	baseline, err := (cognitivevm.Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+	}).SolveFile(ctx, taskPath, root)
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+
+	reuseRoot, reuseTaskPath, err := writeBootstrapBuggyRepo()
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	defer os.RemoveAll(reuseRoot)
+	reuse, err := (cognitivevm.Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+		UseSkills:       true,
+	}).SolveFile(ctx, reuseTaskPath, reuseRoot)
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+
+	baselinePass := baseline.Patched && baseline.Final.Status == "pass"
+	reusePass := reuse.Patched && reuse.Final.Status == "pass" && reuse.SkillUsed != ""
+	return bootstrapComparison{
+		skillStatus:       passStatus(reusePass),
+		baselineToolCalls: baseline.ToolCalls,
+		skillToolCalls:    reuse.ToolCalls,
+		improved:          baselinePass && reusePass && reuse.ToolCalls < baseline.ToolCalls,
 	}, nil
 }
 

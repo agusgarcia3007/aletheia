@@ -14,6 +14,7 @@ import (
 	"aletheia/internal/model"
 	"aletheia/internal/runner"
 	"aletheia/internal/selector"
+	"aletheia/internal/skills"
 	"aletheia/internal/tokenizer"
 )
 
@@ -221,6 +222,186 @@ func TestSolverLearnedSelectorBeatsCandidateGreedyWithoutBeam(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "return a + b") {
 		t.Fatalf("learned selector did not patch repo:\n%s", got)
+	}
+}
+
+func TestSolverCompressesAndReusesSkillWithLowerCost(t *testing.T) {
+	root, taskPath, _ := writeBuggyTask(t, true)
+	dbPath := filepath.Join(root, "memory.sqlite")
+	first := Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+	}
+	firstResult, err := first.SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !firstResult.Patched || firstResult.ToolCalls != 2 {
+		t.Fatalf("first result = %+v", firstResult)
+	}
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	skillList, err := store.ListSkills(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	if len(skillList) != 1 || skillList[0].Name != skills.FixSimpleGoTestFailure {
+		t.Fatalf("skills = %+v", skillList)
+	}
+
+	secondRoot, secondTaskPath, repo := writeBuggyTask(t, true)
+	second := Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+		UseSkills:       true,
+	}
+	secondResult, err := second.SolveFile(context.Background(), secondTaskPath, secondRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondResult.SkillUsed != skills.FixSimpleGoTestFailure || !secondResult.InitialSkipped {
+		t.Fatalf("skill was not used: %+v", secondResult)
+	}
+	if !secondResult.Patched || secondResult.Final.Status != "pass" {
+		t.Fatalf("second result = %+v", secondResult)
+	}
+	if secondResult.ToolCalls >= firstResult.ToolCalls {
+		t.Fatalf("tool calls = %d, want less than %d", secondResult.ToolCalls, firstResult.ToolCalls)
+	}
+	if len(secondResult.Trace) == 0 || secondResult.Trace[0].Action != ActionParseCode {
+		t.Fatalf("skill trace = %+v", secondResult.Trace)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a + b") {
+		t.Fatalf("skill did not patch repo:\n%s", got)
+	}
+}
+
+func TestSolverSkillFailureFallsBackAndDisablesSkill(t *testing.T) {
+	root, taskPath, repo := writeBuggyTask(t, true)
+	dbPath := filepath.Join(root, "memory.sqlite")
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertSkill(context.Background(), memory.Skill{
+		Name:           skills.FixSimpleGoTestFailure,
+		Trigger:        skills.TriggerCalculatorSub,
+		ActionSequence: []string{selector.ActParseCode},
+		SuccessRate:    1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	result, err := (Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+		UseSkills:       true,
+	}).SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SkillUsed != "" || !result.Patched || result.Final.Status != "pass" {
+		t.Fatalf("fallback result = %+v", result)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a + b") {
+		t.Fatalf("fallback did not patch repo:\n%s", got)
+	}
+	store, err = memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	skill, ok, err := store.BestSkillByTrigger(context.Background(), skills.TriggerCalculatorSub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || skill.SuccessRate != 0 {
+		t.Fatalf("skill after failure = %+v ok=%v", skill, ok)
+	}
+}
+
+func TestSolverFailedSkillRestoresRepoBeforeFallback(t *testing.T) {
+	root, taskPath, repo := writeBuggyTask(t, false)
+	dbPath := filepath.Join(root, "memory.sqlite")
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertSkill(context.Background(), memory.Skill{
+		Name:    skills.FixSimpleGoTestFailure,
+		Trigger: skills.TriggerCalculatorSub,
+		ActionSequence: []string{
+			selector.ActParseCode,
+			selector.ActMutateCode,
+			selector.ActVerify,
+			selector.ActRespond,
+		},
+		SuccessRate: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	result, err := (Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+		UseSkills:       true,
+	}).SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SkillUsed != "" || result.Patched || result.Final.Status == "pass" {
+		t.Fatalf("fallback should remain unverified after failed skill: %+v", result)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a - b") {
+		t.Fatalf("failed skill or fallback left partial mutation:\n%s", got)
+	}
+	store, err = memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	skill, ok, err := store.BestSkillByTrigger(context.Background(), skills.TriggerCalculatorSub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || skill.SuccessRate != 0 {
+		t.Fatalf("skill after failed verifier = %+v ok=%v", skill, ok)
 	}
 }
 

@@ -70,9 +70,10 @@ Usage:
   aletheia index ./docs [--db %s]
   aletheia ask --query "qué decisión tomamos sobre el selector?" [--db %s]
   aletheia memory inspect [--db %s]
-  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
+  aletheia memory skills [--db %s]
+  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap
-`, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
+`, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
 }
 
@@ -328,6 +329,8 @@ func runMemory(args []string) error {
 	switch args[0] {
 	case "inspect":
 		return runMemoryInspect(args[1:])
+	case "skills":
+		return runMemorySkills(args[1:])
 	default:
 		return fmt.Errorf("unknown memory subcommand %q", args[0])
 	}
@@ -354,6 +357,7 @@ func runMemoryInspect(args []string) error {
 	}
 	fmt.Printf("documents: %d\n", stats.Documents)
 	fmt.Printf("chunks: %d\n", stats.Chunks)
+	fmt.Printf("skills: %d\n", stats.Skills)
 	fmt.Printf("nodes: %d\n", stats.Nodes)
 	fmt.Printf("edges: %d\n", stats.Edges)
 	if len(stats.LatestPaths) > 0 {
@@ -361,6 +365,31 @@ func runMemoryInspect(args []string) error {
 		for _, path := range stats.LatestPaths {
 			fmt.Printf("  %s\n", path)
 		}
+	}
+	return nil
+}
+
+func runMemorySkills(args []string) error {
+	fs := flag.NewFlagSet("memory skills", flag.ContinueOnError)
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	skills, err := store.ListSkills(context.Background())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("skills: %d\n", len(skills))
+	for _, skill := range skills {
+		fmt.Printf("  %s trigger=%s success_rate=%.4f sequence=%s\n", skill.Name, skill.Trigger, skill.SuccessRate, strings.Join(skill.ActionSequence, ","))
 	}
 	return nil
 }
@@ -376,6 +405,7 @@ func runSolve(args []string) error {
 	searchStrategy := fs.String("search", "greedy", "search strategy: greedy or beam")
 	beamWidth := fs.Int("beam-width", 4, "beam search width")
 	maxDepth := fs.Int("max-depth", 0, "beam search maximum depth; defaults to --max-steps")
+	useSkills := fs.Bool("use-skills", false, "reuse verified compressed skills when trigger matches")
 	verifierNamesCSV := fs.String("verifier", verifier.GoTestName, "comma-separated verifier names")
 	includeVet := fs.Bool("vet", false, "also run go_vet verifier")
 	includeRace := fs.Bool("race", false, "also run go_test_race verifier")
@@ -427,6 +457,7 @@ func runSolve(args []string) error {
 		SearchStrategy:  *searchStrategy,
 		BeamWidth:       *beamWidth,
 		MaxDepth:        *maxDepth,
+		UseSkills:       *useSkills,
 		VerifierNames:   verifierNames,
 	}
 	result, err := solver.SolveFile(context.Background(), *taskPath, wd)
@@ -436,7 +467,14 @@ func runSolve(args []string) error {
 
 	fmt.Printf("goal: %s\n", result.Task.Goal)
 	fmt.Printf("repo: %s\n", result.RepoPath)
-	fmt.Printf("initial verifier: %s %s\n", result.Initial.Verifier, result.Initial.Status)
+	if result.InitialSkipped {
+		fmt.Printf("initial verifier: skipped\n")
+	} else {
+		fmt.Printf("initial verifier: %s %s\n", result.Initial.Verifier, result.Initial.Status)
+	}
+	if result.SkillUsed != "" {
+		fmt.Printf("skill: %s\n", result.SkillUsed)
+	}
 	if *trace {
 		fmt.Println("trace:")
 		for _, entry := range result.Trace {
@@ -450,6 +488,7 @@ func runSolve(args []string) error {
 		fmt.Println("patch: none")
 	}
 	fmt.Printf("final verifier: %s %s\n", result.Final.Verifier, result.Final.Status)
+	fmt.Printf("tool_calls: %d\n", result.ToolCalls)
 	fmt.Printf("evidence database: %s\n", *dbPath)
 	if result.Final.Stderr != "" {
 		fmt.Println("final stderr:")
@@ -476,12 +515,19 @@ func runEval(args []string) error {
 	fmt.Printf("status: bootstrap ready\n")
 	for _, c := range report.Cases {
 		fmt.Printf("%s:\n", c.Name)
-		fmt.Printf("  candidate_greedy: %s\n", c.CandidateGreedyStatus)
+		if c.CandidateGreedyStatus != "" {
+			fmt.Printf("  candidate_greedy: %s\n", c.CandidateGreedyStatus)
+		}
 		if c.BeamStatus != "" {
 			fmt.Printf("  beam: %s\n", c.BeamStatus)
 		}
 		if c.LearnedSelectorStatus != "" {
 			fmt.Printf("  learned_selector: %s\n", c.LearnedSelectorStatus)
+		}
+		if c.SkillReuseStatus != "" {
+			fmt.Printf("  skill_reuse: %s\n", c.SkillReuseStatus)
+			fmt.Printf("  baseline_tool_calls: %d\n", c.BaselineToolCalls)
+			fmt.Printf("  skill_tool_calls: %d\n", c.SkillToolCalls)
 		}
 		fmt.Printf("  improvement: %v\n", c.Improved)
 	}
