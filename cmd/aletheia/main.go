@@ -67,7 +67,7 @@ Usage:
   aletheia index ./docs [--db %s]
   aletheia ask --query "qué decisión tomamos sobre el selector?" [--db %s]
   aletheia memory inspect [--db %s]
-  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--verifier go_test,static_go_parse] [--trace]
+  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
@@ -335,6 +335,9 @@ func runSolve(args []string) error {
 	timeout := fs.Duration("timeout", 60*time.Second, "verifier timeout")
 	checkpoint := fs.String("checkpoint", "", "optional model checkpoint directory")
 	maxSteps := fs.Int("max-steps", 8, "maximum Cognitive VM action steps")
+	searchStrategy := fs.String("search", "greedy", "search strategy: greedy or beam")
+	beamWidth := fs.Int("beam-width", 4, "beam search width")
+	maxDepth := fs.Int("max-depth", 0, "beam search maximum depth; defaults to --max-steps")
 	verifierNamesCSV := fs.String("verifier", verifier.GoTestName, "comma-separated verifier names")
 	includeVet := fs.Bool("vet", false, "also run go_vet verifier")
 	includeRace := fs.Bool("race", false, "also run go_test_race verifier")
@@ -374,6 +377,9 @@ func runSolve(args []string) error {
 		Planner:         planner,
 		Selector:        selector.HeuristicSelector{},
 		MaxSteps:        *maxSteps,
+		SearchStrategy:  *searchStrategy,
+		BeamWidth:       *beamWidth,
+		MaxDepth:        *maxDepth,
 		VerifierNames:   verifierNames,
 	}
 	result, err := solver.SolveFile(context.Background(), *taskPath, wd)
@@ -415,11 +421,20 @@ func runEval(args []string) error {
 		return fmt.Errorf("--suite is required")
 	}
 
-	info, err := eval.ValidateSuite(*suitePath)
+	report, err := eval.RunBootstrap(context.Background(), *suitePath)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("eval suite: %s\n", info.Path)
+	fmt.Printf("eval suite: %s\n", report.Suite.Path)
 	fmt.Printf("status: bootstrap ready\n")
+	for _, c := range report.Cases {
+		fmt.Printf("%s:\n", c.Name)
+		fmt.Printf("  candidate_greedy: %s\n", c.CandidateGreedyStatus)
+		fmt.Printf("  beam: %s\n", c.BeamStatus)
+		fmt.Printf("  improvement: %v\n", c.Improved)
+	}
+	if !report.Improved() {
+		return fmt.Errorf("eval bootstrap did not show beam improvement")
+	}
 	return nil
 }

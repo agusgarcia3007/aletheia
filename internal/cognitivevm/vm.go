@@ -97,17 +97,7 @@ func (vm VM) Run(ctx context.Context, task Task, repoPath string, planner Planne
 	if maxSteps <= 0 {
 		maxSteps = 8
 	}
-	state := State{
-		Goal:     task.Goal,
-		RepoPath: repoPath,
-		Success:  task.Success,
-		Budget: Budget{
-			Tokens:    4000,
-			Seconds:   120,
-			ToolCalls: maxSteps,
-		},
-		Risk: "low",
-	}
+	state := newState(task, repoPath, maxSteps)
 
 	for step := 0; step < maxSteps && !state.Completed; step++ {
 		candidates, err := planner.Candidates(ctx, state)
@@ -153,6 +143,20 @@ func (vm VM) Run(ctx context.Context, task Task, repoPath string, planner Planne
 		})
 	}
 	return state, nil
+}
+
+func newState(task Task, repoPath string, maxSteps int) State {
+	return State{
+		Goal:     task.Goal,
+		RepoPath: repoPath,
+		Success:  task.Success,
+		Budget: Budget{
+			Tokens:    4000,
+			Seconds:   120,
+			ToolCalls: maxSteps,
+		},
+		Risk: "low",
+	}
 }
 
 func (vm VM) Execute(ctx context.Context, state *State, action ActionToken) error {

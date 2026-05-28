@@ -129,6 +129,49 @@ func TestDocumentChunkGraphAndInspect(t *testing.T) {
 	}
 }
 
+func TestRecordTrajectoryCreatesGraph(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	episodeID, err := store.CreateEpisode(ctx, "fix failing test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordTrajectory(ctx, episodeID, []TrajectoryRecord{
+		{SearchNodeID: 1, Depth: 0, Score: 0, Status: "root", Selected: true},
+		{SearchNodeID: 2, ParentSearchNodeID: 1, Action: "<ACT_RUN_TESTS>", Source: "test", Depth: 1, Reward: 10, Score: 9.9, Status: "fail", Selected: true},
+		{SearchNodeID: 3, ParentSearchNodeID: 1, Action: "<ACT_RESPOND>", Source: "test", Depth: 1, Reward: -20, Score: -20, Status: "unverified"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := store.Inspect(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Nodes != 3 || stats.Edges != 3 {
+		t.Fatalf("stats = %+v, want 3 nodes and 3 edges", stats)
+	}
+	edges, err := store.GraphEdges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected int
+	for _, edge := range edges {
+		if edge.Relation == "selected" {
+			selected++
+		}
+	}
+	if selected != 1 {
+		t.Fatalf("selected edges = %d, want 1: %+v", selected, edges)
+	}
+}
+
 func itoa64(v int64) string {
 	return strconv.FormatInt(v, 10)
 }

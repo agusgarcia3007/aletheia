@@ -26,6 +26,9 @@ type Solver struct {
 	Planner         Planner
 	Selector        ActionSelector
 	MaxSteps        int
+	SearchStrategy  string
+	BeamWidth       int
+	MaxDepth        int
 	VerifierNames   []string
 }
 
@@ -98,7 +101,15 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 		VerifierTimeout: s.VerifierTimeout,
 		VerifierNames:   s.VerifierNames,
 	}
-	state, err := vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
+	var state State
+	switch s.SearchStrategy {
+	case "", "greedy":
+		state, err = vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
+	case "beam":
+		state, err = s.runBeam(ctx, task, repoPath, planner, vm)
+	default:
+		return Result{}, fmt.Errorf("unsupported search strategy %q", s.SearchStrategy)
+	}
 	if err != nil {
 		return Result{}, err
 	}

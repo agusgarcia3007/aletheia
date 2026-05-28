@@ -66,6 +66,22 @@ type Edge struct {
 	Weight   float64
 }
 
+type TrajectoryRecord struct {
+	SearchNodeID       int     `json:"search_node_id"`
+	ParentSearchNodeID int     `json:"parent_search_node_id,omitempty"`
+	Action             string  `json:"action,omitempty"`
+	Source             string  `json:"source,omitempty"`
+	Depth              int     `json:"depth"`
+	Reward             float64 `json:"reward"`
+	Score              float64 `json:"score"`
+	Status             string  `json:"status,omitempty"`
+	VerifierStatus     string  `json:"verifier_status,omitempty"`
+	Error              string  `json:"error,omitempty"`
+	Verified           bool    `json:"verified"`
+	Completed          bool    `json:"completed"`
+	Selected           bool    `json:"selected"`
+}
+
 type InspectStats struct {
 	Documents   int
 	Chunks      int
@@ -291,6 +307,44 @@ SELECT id FROM edges WHERE from_node = ? AND to_node = ? AND relation = ? ORDER 
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+func (s *Store) RecordTrajectory(ctx context.Context, episodeID int64, records []TrajectoryRecord) error {
+	nodeIDs := make(map[int]int64, len(records))
+	for _, record := range records {
+		payload, err := json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("marshal trajectory state: %w", err)
+		}
+		label := fmt.Sprintf("episode:%d:trajectory:%d", episodeID, record.SearchNodeID)
+		nodeID, err := s.EnsureNode(ctx, "trajectory_state", label, string(payload))
+		if err != nil {
+			return err
+		}
+		nodeIDs[record.SearchNodeID] = nodeID
+	}
+	for _, record := range records {
+		if record.ParentSearchNodeID == 0 {
+			continue
+		}
+		parentID, ok := nodeIDs[record.ParentSearchNodeID]
+		if !ok {
+			continue
+		}
+		nodeID, ok := nodeIDs[record.SearchNodeID]
+		if !ok {
+			continue
+		}
+		if _, err := s.EnsureEdge(ctx, parentID, nodeID, "expands_to", 1); err != nil {
+			return err
+		}
+		if record.Selected {
+			if _, err := s.EnsureEdge(ctx, parentID, nodeID, "selected", 1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) Chunks(ctx context.Context) ([]Chunk, error) {

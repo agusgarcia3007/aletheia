@@ -102,6 +102,91 @@ func TestSolverWithStaticParseAndGoTestVerifiers(t *testing.T) {
 	}
 }
 
+func TestSolverBeamFixesToyBugAndRecordsTrajectory(t *testing.T) {
+	root, taskPath, repo := writeBuggyTask(t, true)
+	dbPath := filepath.Join(root, "memory.sqlite")
+	solver := Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+		SearchStrategy:  "beam",
+		BeamWidth:       4,
+		MaxDepth:        8,
+		VerifierNames:   []string{"static_go_parse", "go_test"},
+	}
+	result, err := solver.SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Patched || result.Final.Status != "pass" {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Initial.Status != "fail" {
+		t.Fatalf("initial status = %q, want fail", result.Initial.Status)
+	}
+	if len(result.Trace) == 0 || result.Trace[0].Action != ActionRunTests {
+		t.Fatalf("trace should start with initial verifier evidence: %+v", result.Trace)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a + b") {
+		t.Fatalf("beam did not apply verified patch to original repo:\n%s", got)
+	}
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	stats, err := store.Inspect(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Nodes == 0 || stats.Edges == 0 {
+		t.Fatalf("trajectory graph was not recorded: %+v", stats)
+	}
+	edges, err := store.GraphEdges(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected int
+	for _, edge := range edges {
+		if edge.Relation == "selected" {
+			selected++
+		}
+	}
+	if selected == 0 {
+		t.Fatalf("selected trajectory edges missing: %+v", edges)
+	}
+}
+
+func TestSolverBeamLeavesOriginalRepoUntouchedWithoutVerifiedSolution(t *testing.T) {
+	root, taskPath, repo := writeBuggyTask(t, false)
+	solver := Solver{
+		DBPath:          filepath.Join(root, "memory.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        5,
+		SearchStrategy:  "beam",
+		BeamWidth:       3,
+		MaxDepth:        5,
+	}
+	result, err := solver.SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Patched || result.Final.Status == "pass" {
+		t.Fatalf("unexpected verified result = %+v", result)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a - b") {
+		t.Fatalf("unverified beam branch mutated original repo:\n%s", got)
+	}
+}
+
 func TestMutateCreatesCandidateWithoutWriting(t *testing.T) {
 	root, _, repo := writeBuggyTask(t, true)
 	state := State{

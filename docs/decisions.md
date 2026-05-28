@@ -37,3 +37,12 @@
 - Reuse the existing SQLite document/chunk/node/edge schema for indexing and retrieval.
 - Use deterministic keyword plus hashing-vector retrieval with no remote API or model dependency.
 - Answer only from indexed local chunks and abstain when confidence is too low.
+
+## Milestone 5
+
+- Keep greedy `solve` as the default path and make beam search opt-in with `--search beam`.
+- Implement `internal/search` as a generic callback-driven package so it does not import `cognitivevm` and create an import cycle.
+- Run beam branches in temporary repository copies, then apply the verified winner to the original repository and verify it again.
+- Score beam states with a deterministic local reward based on verifier pass/fail, candidate patches, discovered patterns, evidence, depth, and branch errors.
+- Persist beam trajectories in the existing `nodes` and `edges` graph as `trajectory_state` records without adding a migration.
+- Use a programmatic bootstrap eval where candidate-greedy fails on a noisy planner and beam preserves the verified branch.
