@@ -1,0 +1,11 @@
+.git
+.gitignore
+.DS_Store
+
+checkpoints
+data
+datasets/generated
+
+*.sqlite
+*.sqlite-*
+tmp

@@ -146,3 +146,11 @@
 - Document real CLI smoke checks in `docs/testing.md`.
 - Keep memory graph payloads and generated datasets JSON-based for inspectability.
 - Leave ternary/int8, mixture of experts, overnight daemon, and private frontier benchmarks out of the core path for now.
+
+## Milestone 19
+
+- Add an OpenAI-compatible inference server for deploying a local checkpoint behind the official SDKs.
+- Implement Chat Completions and legacy Completions first; keep Responses API out of v1 to reduce compatibility surface.
+- Require local Bearer auth through `ALETHEIA_API_KEY`; this is the API key clients pass to the OpenAI SDK.
+- Serve inference only. Do not expose `solve`, verifiers, repository access, shell commands, or file mutation over the public API.
+- Use a self-contained Dockerfile for Dokploy so the default tiny checkpoint is produced during image build.

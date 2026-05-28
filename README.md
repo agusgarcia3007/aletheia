@@ -28,5 +28,48 @@ Opt-in features:
 - `solve --use-skills` for verified skill reuse.
 - `solve --fuzz` and `solve --bench` for costly Go verifiers.
 - `learn --db ... --out ...` for manual local dataset export.
+- `serve` for an OpenAI-compatible inference API around a local checkpoint.
 
-See [docs/testing.md](docs/testing.md) for the smoke suite and [docs/architecture.md](docs/architecture.md) for subsystem contracts.
+OpenAI-compatible local API:
+
+```bash
+ALETHEIA_API_KEY=local-dev go run ./cmd/aletheia serve \
+  --checkpoint checkpoints/tiny-actions \
+  --addr :8080
+```
+
+Python SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(api_key="local-dev", base_url="http://localhost:8080/v1")
+response = client.chat.completions.create(
+    model="tiny-actions",
+    messages=[{"role": "user", "content": "fix failing go test"}],
+    max_tokens=32,
+)
+print(response.choices[0].message.content)
+```
+
+Node SDK:
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "local-dev",
+  baseURL: "http://localhost:8080/v1",
+});
+
+const response = await client.chat.completions.create({
+  model: "tiny-actions",
+  messages: [{ role: "user", content: "fix failing go test" }],
+  max_tokens: 32,
+});
+console.log(response.choices[0].message.content);
+```
+
+The `tiny-actions` checkpoint is an action planner, so it returns action tokens rather than general chat text.
+
+See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.

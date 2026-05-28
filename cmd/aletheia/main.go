@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"aletheia/internal/apiserver"
 	"aletheia/internal/cognitivevm"
 	"aletheia/internal/config"
 	"aletheia/internal/eval"
@@ -65,6 +66,8 @@ func run(args []string) error {
 		return runEval(args[2:])
 	case "learn":
 		return runLearn(args[2:])
+	case "serve":
+		return runServe(args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 		return nil
@@ -90,6 +93,7 @@ Usage:
   aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam|mcts] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap [--json]
   aletheia learn --db %s --suite evals/bootstrap --out datasets/generated [--train-selector-out checkpoints/selector-generated]
+  aletheia serve [--addr :8080] [--checkpoint checkpoints/tiny-actions] [--api-key $ALETHEIA_API_KEY]
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 }
 
@@ -814,6 +818,33 @@ func runEval(args []string) error {
 	return nil
 }
 
+func runServe(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	addr := fs.String("addr", envDefault("ALETHEIA_ADDR", apiserver.DefaultAddr), "HTTP listen address")
+	checkpoint := fs.String("checkpoint", envDefault("ALETHEIA_CHECKPOINT", apiserver.DefaultCheckpoint), "model checkpoint directory")
+	modelName := fs.String("model", os.Getenv("ALETHEIA_MODEL"), "served OpenAI-compatible model name")
+	apiKey := fs.String("api-key", os.Getenv("ALETHEIA_API_KEY"), "Bearer API key for /v1/* endpoints")
+	auth := fs.String("auth", envDefault("ALETHEIA_AUTH", "bearer"), "authentication mode: bearer or none")
+	maxBodyBytes := fs.Int64("max-body-bytes", apiserver.DefaultMaxBodyBytes, "maximum JSON request body size")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	server, err := apiserver.New(apiserver.Options{
+		Addr:         *addr,
+		Checkpoint:   *checkpoint,
+		ModelName:    *modelName,
+		APIKey:       *apiKey,
+		Auth:         *auth,
+		MaxBodyBytes: *maxBodyBytes,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("serving model %s on %s\n", server.ModelName(), server.Addr())
+	return server.ListenAndServe(context.Background())
+}
+
 func runLearn(args []string) error {
 	fs := flag.NewFlagSet("learn", flag.ContinueOnError)
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
@@ -851,4 +882,11 @@ func runLearn(args []string) error {
 		fmt.Printf("eval_after_verified_success_rate: %.4f\n", report.EvalAfter.VerifiedSuccessRate)
 	}
 	return nil
+}
+
+func envDefault(name string, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }

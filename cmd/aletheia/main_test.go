@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -35,6 +37,23 @@ func TestRunWithoutArgsPrintsUsage(t *testing.T) {
 	}
 	if !strings.Contains(out, "Usage:") || !strings.Contains(out, "aletheia solve") {
 		t.Fatalf("usage output:\n%s", out)
+	}
+}
+
+func TestRunServeHelpAndInvalidCheckpoint(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "serve", "--help"})
+	})
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("err = %v, want flag.ErrHelp", err)
+	}
+	if !strings.Contains(out, "-checkpoint") || !strings.Contains(out, "-api-key") {
+		t.Fatalf("serve help:\n%s", out)
+	}
+
+	err = run([]string{"aletheia", "serve", "--auth", "none", "--checkpoint", t.TempDir(), "--addr", "127.0.0.1:0"})
+	if err == nil || !strings.Contains(err.Error(), "load checkpoint") {
+		t.Fatalf("err = %v, want checkpoint load error", err)
 	}
 }
 

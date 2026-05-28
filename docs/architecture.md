@@ -15,6 +15,7 @@ Current loop:
 9. `internal/tokenizer`, `internal/model`, and `internal/runner` provide the local micro-model path for action candidates, trajectory scoring, and opt-in sampling.
 10. `internal/repair` builds bounded Go patch candidates from verifier failures without writing files before verification.
 11. `internal/learning` exports local memory into reproducible JSONL datasets and can retrain the selector manually.
+12. `internal/apiserver` exposes checkpoint inference through OpenAI-compatible HTTP endpoints for deployment.
 
 Checkpoints are split by responsibility:
 
@@ -38,3 +39,5 @@ Costly verifiers are opt-in. `go_test_fuzz` and `go_test_bench` run through the 
 The repair engine is still intentionally small and deterministic. Later milestones can broaden it beyond simple Go failures while keeping the same verifier, selector, search, and memory contracts.
 
 Model scaling is manual. `configs/core-100m.yaml` is a target configuration, not an automatic test path; scaling should wait for eval evidence that a checkpoint beats the current mock/heuristic stack.
+
+Deployment is inference-only in v1. `aletheia serve` loads one checkpoint and serves `/v1/models`, `/v1/chat/completions`, and `/v1/completions` behind local Bearer auth. It does not expose `solve`, verifiers, repository access, or command execution.
