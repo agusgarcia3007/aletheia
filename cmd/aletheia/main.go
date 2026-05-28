@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +28,9 @@ import (
 
 func main() {
 	if err := run(os.Args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -33,7 +38,8 @@ func main() {
 
 func run(args []string) error {
 	if len(args) < 2 {
-		return usage()
+		usage(os.Stdout)
+		return nil
 	}
 
 	switch args[1] {
@@ -60,14 +66,15 @@ func run(args []string) error {
 	case "learn":
 		return runLearn(args[2:])
 	case "-h", "--help", "help":
-		return usage()
+		usage(os.Stdout)
+		return nil
 	default:
 		return fmt.Errorf("unknown command %q", args[1])
 	}
 }
 
-func usage() error {
-	fmt.Fprintf(os.Stderr, `aletheia is a local verifier-first cognitive architecture.
+func usage(w io.Writer) {
+	fmt.Fprintf(w, `aletheia is a local verifier-first cognitive architecture.
 
 Usage:
   aletheia init [--config configs/micro.yaml] [--db %s]
@@ -84,7 +91,6 @@ Usage:
   aletheia eval --suite evals/bootstrap [--json]
   aletheia learn --db %s --suite evals/bootstrap --out datasets/generated [--train-selector-out checkpoints/selector-generated]
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
-	return flag.ErrHelp
 }
 
 func runConfig(args []string) error {

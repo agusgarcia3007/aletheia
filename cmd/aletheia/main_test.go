@@ -26,6 +26,18 @@ func TestRunConfigInspect(t *testing.T) {
 	}
 }
 
+func TestRunWithoutArgsPrintsUsage(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Usage:") || !strings.Contains(out, "aletheia solve") {
+		t.Fatalf("usage output:\n%s", out)
+	}
+}
+
 func TestRunInitUsesConfigDB(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeCLIConfig(t, root, "greedy", false)
