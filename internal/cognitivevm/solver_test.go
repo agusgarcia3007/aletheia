@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"aletheia/internal/memory"
 	"aletheia/internal/model"
 	"aletheia/internal/runner"
 	"aletheia/internal/selector"
@@ -56,6 +57,48 @@ func TestSolverFixesToyBugAndRecordsEvidence(t *testing.T) {
 		if result.Trace[i].Action != want {
 			t.Fatalf("trace[%d] = %s, want %s", i, result.Trace[i].Action, want)
 		}
+	}
+	if len(result.Trace[0].Verifiers) == 0 || result.Trace[0].Verifiers[0] != "go_test" {
+		t.Fatalf("trace missing verifier names: %+v", result.Trace[0])
+	}
+	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rows, err := store.EvidenceByVerifier(context.Background(), 1, "go_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("go_test evidence rows = %d, want 2", len(rows))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rows[0].Payload), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["action"] != string(ActionRunTests) || payload["command"] != "go test ./..." {
+		t.Fatalf("unexpected payload: %v", payload)
+	}
+}
+
+func TestSolverWithStaticParseAndGoTestVerifiers(t *testing.T) {
+	root, taskPath, _ := writeBuggyTask(t, true)
+	solver := Solver{
+		DBPath:          filepath.Join(root, "memory.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+		VerifierNames:   []string{"static_go_parse", "go_test"},
+	}
+	result, err := solver.SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Patched || result.Final.Status != "pass" {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Final.Verifier != "bus" {
+		t.Fatalf("final verifier = %s, want bus", result.Final.Verifier)
 	}
 }
 

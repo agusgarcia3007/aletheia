@@ -23,3 +23,10 @@
 - Keep the toy patcher bounded to `examples/buggy-go`, but delay file writes until `<ACT_VERIFY>`.
 - Use a heuristic selector that can fall back safely when model candidates are missing or invalid.
 - Allow optional model-backed planning from a checkpoint without requiring it for `solve`.
+
+## Milestone 3
+
+- Use a verifier bus so VM actions can run one or more required verifiers and aggregate evidence.
+- Execute verifier commands without a shell and only through an exact allowlist.
+- Keep `go_test` as the default required verifier; make `static_go_parse`, `go_vet`, and `go_test_race` opt-in.
+- Store structured verifier payloads in the existing evidence table instead of adding a migration.

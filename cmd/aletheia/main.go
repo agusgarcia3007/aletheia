@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"aletheia/internal/cognitivevm"
@@ -16,6 +17,7 @@ import (
 	"aletheia/internal/selector"
 	"aletheia/internal/tokenizer"
 	"aletheia/internal/training"
+	"aletheia/internal/verifier"
 )
 
 func main() {
@@ -55,7 +57,7 @@ Usage:
   aletheia init [--db %s]
   aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
   aletheia run --checkpoint checkpoints/tiny-actions --prompt "<USER>fix failing go test<ASSISTANT>"
-  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--trace]
+  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap
 `, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
@@ -168,6 +170,9 @@ func runSolve(args []string) error {
 	timeout := fs.Duration("timeout", 60*time.Second, "verifier timeout")
 	checkpoint := fs.String("checkpoint", "", "optional model checkpoint directory")
 	maxSteps := fs.Int("max-steps", 8, "maximum Cognitive VM action steps")
+	verifierNamesCSV := fs.String("verifier", verifier.GoTestName, "comma-separated verifier names")
+	includeVet := fs.Bool("vet", false, "also run go_vet verifier")
+	includeRace := fs.Bool("race", false, "also run go_test_race verifier")
 	trace := fs.Bool("trace", false, "print Cognitive VM action trace")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -177,6 +182,10 @@ func runSolve(args []string) error {
 	}
 
 	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	verifierNames, err := verifier.ParseNames(*verifierNamesCSV, *includeVet, *includeRace)
 	if err != nil {
 		return err
 	}
@@ -200,6 +209,7 @@ func runSolve(args []string) error {
 		Planner:         planner,
 		Selector:        selector.HeuristicSelector{},
 		MaxSteps:        *maxSteps,
+		VerifierNames:   verifierNames,
 	}
 	result, err := solver.SolveFile(context.Background(), *taskPath, wd)
 	if err != nil {
@@ -212,7 +222,7 @@ func runSolve(args []string) error {
 	if *trace {
 		fmt.Println("trace:")
 		for _, entry := range result.Trace {
-			fmt.Printf("  %02d %s source=%s status=%s verifier=%s reason=%s\n", entry.Step, entry.Action, entry.Source, entry.Status, entry.VerifierStatus, entry.Reason)
+			fmt.Printf("  %02d %s source=%s status=%s verifier=%s verifiers=%s reason=%s\n", entry.Step, entry.Action, entry.Source, entry.Status, entry.VerifierStatus, strings.Join(entry.Verifiers, ","), entry.Reason)
 		}
 	}
 	if result.Patched {

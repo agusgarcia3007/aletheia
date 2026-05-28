@@ -2,6 +2,8 @@ package cognitivevm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,6 +69,7 @@ type TraceEntry struct {
 	Source         string
 	Status         string
 	VerifierStatus string
+	Verifiers      []string
 }
 
 type Planner interface {
@@ -81,6 +84,7 @@ type VM struct {
 	Store           *memory.Store
 	EpisodeID       int64
 	VerifierTimeout time.Duration
+	VerifierNames   []string
 }
 
 func (vm VM) Run(ctx context.Context, task Task, repoPath string, planner Planner, actionSelector ActionSelector, maxSteps int) (State, error) {
@@ -130,7 +134,9 @@ func (vm VM) Run(ctx context.Context, task Task, repoPath string, planner Planne
 		}
 		trace.Status = state.FinalStatus
 		if len(state.VerifierResults) > 0 {
-			trace.VerifierStatus = state.VerifierResults[len(state.VerifierResults)-1].Status
+			last := state.VerifierResults[len(state.VerifierResults)-1]
+			trace.VerifierStatus = last.Status
+			trace.Verifiers = append([]string(nil), last.Artifacts...)
 		}
 		state.ActionTrace = append(state.ActionTrace, trace)
 	}
@@ -211,16 +217,16 @@ func ParseAction(action string) (ActionToken, error) {
 }
 
 func (vm VM) runTests(ctx context.Context, state *State) error {
-	ev, err := verifier.RunSuccess(ctx, state.RepoPath, state.Success, vm.VerifierTimeout)
+	result, err := vm.runVerifierBus(ctx, state, "")
 	if err != nil {
 		return err
 	}
 	state.ToolCalls++
 	state.HasRunTests = true
-	state.Evidence = append(state.Evidence, ev)
-	state.VerifierResults = append(state.VerifierResults, ev)
-	state.FinalStatus = ev.Status
-	return vm.recordEvidence(ctx, ev, string(ActionRunTests))
+	state.Evidence = append(state.Evidence, result.Evidence...)
+	state.VerifierResults = append(state.VerifierResults, result.Aggregate)
+	state.FinalStatus = result.Status
+	return vm.recordResult(ctx, result, string(ActionRunTests), "")
 }
 
 func (vm VM) parseCode(state *State) error {
@@ -285,14 +291,15 @@ func (vm VM) verify(ctx context.Context, state *State) error {
 	if err := os.WriteFile(patch.Path, []byte(patch.NewText), 0o644); err != nil {
 		return err
 	}
-	ev, verifyErr := verifier.RunSuccess(ctx, state.RepoPath, state.Success, vm.VerifierTimeout)
+	patchHash := hashText(patch.Diff)
+	result, verifyErr := vm.runVerifierBus(ctx, state, patchHash)
 	state.ToolCalls++
-	state.Evidence = append(state.Evidence, ev)
-	state.VerifierResults = append(state.VerifierResults, ev)
-	if recordErr := vm.recordEvidence(ctx, ev, string(ActionVerify)); recordErr != nil && verifyErr == nil {
+	state.Evidence = append(state.Evidence, result.Evidence...)
+	state.VerifierResults = append(state.VerifierResults, result.Aggregate)
+	if recordErr := vm.recordResult(ctx, result, string(ActionVerify), patchHash); recordErr != nil && verifyErr == nil {
 		verifyErr = recordErr
 	}
-	if ev.Status == "pass" {
+	if result.Status == verifier.StatusPass {
 		state.Verified = true
 		state.FinalStatus = "verified"
 		return verifyErr
@@ -304,21 +311,50 @@ func (vm VM) verify(ctx context.Context, state *State) error {
 	return verifyErr
 }
 
-func (vm VM) recordEvidence(ctx context.Context, ev verifier.Evidence, action string) error {
+func (vm VM) runVerifierBus(ctx context.Context, state *State, patchDiffHash string) (verifier.Result, error) {
+	names := vm.VerifierNames
+	if len(names) == 0 {
+		names = []string{verifier.GoTestName}
+	}
+	bus, err := verifier.NewBus(names)
+	if err != nil {
+		return verifier.Result{}, err
+	}
+	result := bus.Check(ctx, verifier.Request{
+		RepoPath:       state.RepoPath,
+		SuccessCommand: state.Success,
+		Timeout:        vm.VerifierTimeout,
+		TaskGoal:       state.Goal,
+		PatchDiffHash:  patchDiffHash,
+	})
+	return result, nil
+}
+
+func (vm VM) recordResult(ctx context.Context, result verifier.Result, action string, patchDiffHash string) error {
 	if vm.Store == nil || vm.EpisodeID == 0 {
 		return nil
 	}
-	_, err := vm.Store.RecordEvidence(ctx, memory.Evidence{
-		EpisodeID: vm.EpisodeID,
-		Verifier:  ev.Verifier,
-		Status:    ev.Status,
-		Score:     ev.Score,
-		Stdout:    ev.Stdout,
-		Stderr:    ev.Stderr,
-		Payload:   fmt.Sprintf(`{"action":%q}`, action),
-		Timestamp: ev.Timestamp,
-	})
-	return err
+	names := make([]string, 0, len(result.Evidence))
+	for _, ev := range result.Evidence {
+		names = append(names, ev.Verifier)
+	}
+	for _, ev := range result.Evidence {
+		_, err := vm.Store.RecordEvidence(ctx, memory.Evidence{
+			EpisodeID: vm.EpisodeID,
+			Verifier:  ev.Verifier,
+			Status:    ev.Status,
+			Score:     ev.Score,
+			Stdout:    ev.Stdout,
+			Stderr:    ev.Stderr,
+			Artifacts: ev.Artifacts,
+			Payload:   verifier.Payload(ev, action, names, patchDiffHash),
+			Timestamp: ev.Timestamp,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s State) lastVerifierStatus() string {
@@ -387,4 +423,9 @@ func modelPrompt(state State) string {
 		b.WriteString(string(trace.Action))
 	}
 	return b.String()
+}
+
+func hashText(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }

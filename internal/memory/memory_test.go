@@ -38,4 +38,11 @@ func TestMigrateAndRecordEvidence(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("evidence count = %d, want 1", count)
 	}
+	rows, err := store.EvidenceByVerifier(ctx, episodeID, "go_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Verifier != "go_test" || rows[0].Status != "pass" {
+		t.Fatalf("evidence rows = %+v", rows)
+	}
 }

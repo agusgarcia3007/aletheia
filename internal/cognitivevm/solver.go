@@ -26,6 +26,7 @@ type Solver struct {
 	Planner         Planner
 	Selector        ActionSelector
 	MaxSteps        int
+	VerifierNames   []string
 }
 
 type Result struct {
@@ -95,6 +96,7 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 		Store:           store,
 		EpisodeID:       episodeID,
 		VerifierTimeout: s.VerifierTimeout,
+		VerifierNames:   s.VerifierNames,
 	}
 	state, err := vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
 	if err != nil {

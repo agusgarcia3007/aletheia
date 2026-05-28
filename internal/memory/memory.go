@@ -108,6 +108,35 @@ func (s *Store) EvidenceCount(ctx context.Context) (int, error) {
 	return count, err
 }
 
+func (s *Store) EvidenceByVerifier(ctx context.Context, episodeID int64, verifier string) ([]Evidence, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, episode_id, verifier, status, score, stdout, stderr, artifacts, payload, created_at
+FROM evidence
+WHERE episode_id = ? AND verifier = ?
+ORDER BY id
+`, episodeID, verifier)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Evidence
+	for rows.Next() {
+		var ev Evidence
+		var artifactsJSON string
+		var createdAt string
+		if err := rows.Scan(&ev.ID, &ev.EpisodeID, &ev.Verifier, &ev.Status, &ev.Score, &ev.Stdout, &ev.Stderr, &artifactsJSON, &ev.Payload, &createdAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(artifactsJSON), &ev.Artifacts)
+		if ts, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			ev.Timestamp = ts
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
 const schema = `
 CREATE TABLE IF NOT EXISTS documents (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
