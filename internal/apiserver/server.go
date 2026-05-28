@@ -17,7 +17,7 @@ import (
 
 const (
 	DefaultAddr         = ":8080"
-	DefaultCheckpoint   = "checkpoints/tiny-actions"
+	DefaultCheckpoint   = "checkpoints/aletheia-chat-basic"
 	DefaultMaxBodyBytes = int64(1 << 20)
 )
 
@@ -295,6 +295,7 @@ func (s *Server) generate(prompt string, opts generationOptions) (string, map[st
 		return "", nil, err
 	}
 	generatedTokens := tokens[len(promptTokens):]
+	generatedTokens = trimStopTokens(generatedTokens, eos, actRespond)
 	text, err := s.tokenizer.Decode(generatedTokens)
 	if err != nil {
 		return "", nil, err
@@ -304,6 +305,24 @@ func (s *Server) generate(prompt string, opts generationOptions) (string, map[st
 		"completion_tokens": len(generatedTokens),
 		"total_tokens":      len(tokens),
 	}, nil
+}
+
+func trimStopTokens(tokens []int, stopTokens ...int) []int {
+	for len(tokens) > 0 {
+		last := tokens[len(tokens)-1]
+		found := false
+		for _, stop := range stopTokens {
+			if last == stop {
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+		tokens = tokens[:len(tokens)-1]
+	}
+	return tokens
 }
 
 func (s *Server) id(prefix string) string {

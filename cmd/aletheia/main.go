@@ -83,6 +83,7 @@ Usage:
   aletheia init [--config configs/micro.yaml] [--db %s]
   aletheia config inspect --config configs/micro.yaml
   aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
+  aletheia train --config configs/chat-basic.yaml --dataset datasets/chat_basic.jsonl --out checkpoints/aletheia-chat-basic
   aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
   aletheia run --checkpoint checkpoints/tiny-actions --prompt "<USER>fix failing go test<ASSISTANT>"
   aletheia index ./docs [--config configs/micro.yaml] [--db %s]
@@ -93,7 +94,7 @@ Usage:
   aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam|mcts] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap [--json]
   aletheia learn --db %s --suite evals/bootstrap --out datasets/generated [--train-selector-out checkpoints/selector-generated]
-  aletheia serve [--addr :8080] [--checkpoint checkpoints/tiny-actions] [--api-key $ALETHEIA_API_KEY]
+  aletheia serve [--addr :8080] [--checkpoint checkpoints/aletheia-chat-basic] [--model aletheia-chat-basic] [--api-key $ALETHEIA_API_KEY]
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 }
 

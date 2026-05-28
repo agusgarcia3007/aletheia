@@ -34,6 +34,28 @@ func TestLoadDatasetAndRejectOverContext(t *testing.T) {
 	}
 }
 
+func TestLoadChatBasicDataset(t *testing.T) {
+	tok := tokenizer.New()
+	path := "../../datasets/chat_basic.jsonl"
+	samples, err := LoadDataset(path, tok, 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) < 20 {
+		t.Fatalf("chat samples = %d, want at least 20", len(samples))
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "<ACT_") {
+		t.Fatal("chat dataset should not train action tokens")
+	}
+	if !strings.Contains(string(raw), "aletheia-chat-basic") {
+		t.Fatal("chat dataset should document the public chat model slug")
+	}
+}
+
 func TestTrainTinyAndGenerate(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "tiny.yaml")
@@ -97,6 +119,75 @@ inference:
 	}
 	if !strings.Contains(decoded, "<ACT_RUN_TESTS>") || !strings.Contains(decoded, "<ACT_RESPOND>") {
 		t.Fatalf("generated sequence missing expected actions: %s", decoded)
+	}
+}
+
+func TestTrainBasicChatSubsetAndGenerate(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "chat.yaml")
+	datasetPath := filepath.Join(dir, "chat.jsonl")
+	outDir := filepath.Join(dir, "ckpt")
+	writeTrainingFile(t, configPath, `project:
+  name: test
+  checkpoint_dir: `+dir+`
+model:
+  name: aletheia-chat-basic-test
+  vocab_size: 512
+  context_length: 64
+  n_layers: 1
+  n_heads: 2
+  d_model: 24
+  d_ff: 48
+  seed: 13
+training:
+  batch_size: 4
+  learning_rate: 0.09
+  max_steps: 120
+  grad_clip: 5
+inference:
+  max_tokens: 16
+  top_k: 4
+`)
+	var data strings.Builder
+	for i := 0; i < 8; i++ {
+		data.WriteString(`{"prompt":"<USER>hola<ASSISTANT>","completion":"Hola.<EOS>"}` + "\n")
+	}
+	writeTrainingFile(t, datasetPath, data.String())
+
+	report, err := Train(context.Background(), Options{
+		ConfigPath:  configPath,
+		DatasetPath: datasetPath,
+		OutDir:      outDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FinalLoss >= report.InitialLoss*0.8 {
+		t.Fatalf("loss did not drop enough: initial=%v final=%v", report.InitialLoss, report.FinalLoss)
+	}
+	tok := tokenizer.New()
+	m, manifest, err := model.Load(outDir, tok.VocabSize())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Config.Name != "aletheia-chat-basic-test" {
+		t.Fatalf("model name = %q", manifest.Config.Name)
+	}
+	r := runner.New(m, tok)
+	eos, _ := tok.ID("<EOS>")
+	tokens, err := r.Generate("<USER>hola<ASSISTANT>", runner.Options{
+		MaxTokens:  16,
+		StopTokens: []int{eos},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := tok.Decode(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(decoded, "Hola") || strings.Contains(decoded, "<ACT_") {
+		t.Fatalf("generated chat response is not clean: %s", decoded)
 	}
 }
 

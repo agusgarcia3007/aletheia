@@ -105,12 +105,43 @@ func TestCompletionsAndBodyLimit(t *testing.T) {
 	}
 }
 
+func TestChatBasicCheckpointDoesNotEmitActionTokensForGreeting(t *testing.T) {
+	server := newNamedTestServer(t, "aletheia-chat-basic", Options{APIKey: "secret"})
+	body := `{"model":"aletheia-chat-basic","messages":[{"role":"user","content":"hola como estas?"}],"max_tokens":16}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Choices) != 1 {
+		t.Fatalf("choices = %+v", response.Choices)
+	}
+	content := response.Choices[0].Message.Content
+	if strings.TrimSpace(content) == "" || strings.Contains(content, "<ACT_") {
+		t.Fatalf("content = %q", content)
+	}
+}
+
 func newTestServer(t *testing.T, opts Options) *Server {
+	t.Helper()
+	return newNamedTestServer(t, "tiny-actions", opts)
+}
+
+func newNamedTestServer(t *testing.T, modelName string, opts Options) *Server {
 	t.Helper()
 	checkpoint := filepath.Join(t.TempDir(), "checkpoint")
 	tok := tokenizer.New()
 	m, err := model.New(model.Config{
-		Name:          "tiny-actions",
+		Name:          modelName,
 		VocabSize:     tok.VocabSize(),
 		ContextLength: 64,
 		NLayers:       1,
@@ -122,11 +153,7 @@ func newTestServer(t *testing.T, opts Options) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	respondID, ok := tok.ID("<ACT_RESPOND>")
-	if !ok {
-		t.Fatal("missing action token")
-	}
-	m.Bias[respondID] = 10
+	m.Bias[int('H')] = 10
 	if err := m.Save(checkpoint, tok.VocabSize(), 1, 0.1); err != nil {
 		t.Fatal(err)
 	}

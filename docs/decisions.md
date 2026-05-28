@@ -153,4 +153,12 @@
 - Implement Chat Completions and legacy Completions first; keep Responses API out of v1 to reduce compatibility surface.
 - Require local Bearer auth through `ALETHEIA_API_KEY`; this is the API key clients pass to the OpenAI SDK.
 - Serve inference only. Do not expose `solve`, verifiers, repository access, shell commands, or file mutation over the public API.
-- Use a self-contained Dockerfile for Dokploy so the default tiny checkpoint is produced during image build.
+- Use a self-contained Dockerfile for Dokploy so deployable checkpoints are produced during image build.
+
+## Milestone 20
+
+- Add `aletheia-chat-basic` as a separate local prompt/completion checkpoint for basic conversation.
+- Keep `tiny-actions` as the action planner for `solve` and planner experiments; do not use it as the public chat default.
+- Train chat locally from `datasets/chat_basic.jsonl` with short `<EOS>`-terminated completions.
+- Keep chat capability intentionally narrow: greetings, identity, limits, Aletheia commands, API usage, and soft abstention.
+- Make Docker/Dokploy serve `aletheia-chat-basic` by default while still building `tiny-actions` for explicit planner-token deployments.

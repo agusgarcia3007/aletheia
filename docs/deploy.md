@@ -16,11 +16,11 @@ Required service environment variables:
 ```env
 ALETHEIA_ADDR=:8080
 ALETHEIA_API_KEY=<your-api-key>
-ALETHEIA_CHECKPOINT=/app/checkpoints/tiny-actions
-ALETHEIA_MODEL=tiny-actions
+ALETHEIA_CHECKPOINT=/app/checkpoints/aletheia-chat-basic
+ALETHEIA_MODEL=aletheia-chat-basic
 ```
 
-The Dockerfile is self-contained for the default model: it builds the Go binary and trains the tiny bootstrap checkpoint inside the image. This avoids relying on local ignored `checkpoints/` content during deploy.
+The Dockerfile is self-contained for the default API model: it builds the Go binary and trains both `aletheia-chat-basic` and `tiny-actions` inside the image. Dokploy serves `aletheia-chat-basic` by default. If you want to expose planner-token inference instead, override `ALETHEIA_CHECKPOINT=/app/checkpoints/tiny-actions` and `ALETHEIA_MODEL=tiny-actions`.
 
 ## API Smoke
 
@@ -30,7 +30,7 @@ curl https://your-domain.example/healthz
 curl https://your-domain.example/v1/chat/completions \
   -H "Authorization: Bearer $ALETHEIA_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"tiny-actions","messages":[{"role":"user","content":"fix failing go test"}],"max_tokens":32}'
+  -d '{"model":"aletheia-chat-basic","messages":[{"role":"user","content":"hola como estas?"}],"max_tokens":64}'
 ```
 
 Python SDK:
@@ -44,9 +44,9 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="tiny-actions",
-    messages=[{"role": "user", "content": "fix failing go test"}],
-    max_tokens=32,
+    model="aletheia-chat-basic",
+    messages=[{"role": "user", "content": "hola como estas?"}],
+    max_tokens=64,
 )
 print(response.choices[0].message.content)
 ```
