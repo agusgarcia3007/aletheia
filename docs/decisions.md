@@ -30,3 +30,10 @@
 - Execute verifier commands without a shell and only through an exact allowlist.
 - Keep `go_test` as the default required verifier; make `static_go_parse`, `go_vet`, and `go_test_race` opt-in.
 - Store structured verifier payloads in the existing evidence table instead of adding a migration.
+
+## Milestone 4
+
+- Keep `run` as the model-generation command and add `ask` for local document QA.
+- Reuse the existing SQLite document/chunk/node/edge schema for indexing and retrieval.
+- Use deterministic keyword plus hashing-vector retrieval with no remote API or model dependency.
+- Answer only from indexed local chunks and abstain when confidence is too low.

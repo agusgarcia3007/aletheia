@@ -13,6 +13,7 @@ import (
 	"aletheia/internal/eval"
 	"aletheia/internal/memory"
 	"aletheia/internal/model"
+	"aletheia/internal/retriever"
 	"aletheia/internal/runner"
 	"aletheia/internal/selector"
 	"aletheia/internal/tokenizer"
@@ -39,6 +40,12 @@ func run(args []string) error {
 		return runTrain(args[2:])
 	case "run":
 		return runModel(args[2:])
+	case "index":
+		return runIndex(args[2:])
+	case "ask":
+		return runAsk(args[2:])
+	case "memory":
+		return runMemory(args[2:])
 	case "solve":
 		return runSolve(args[2:])
 	case "eval":
@@ -57,9 +64,12 @@ Usage:
   aletheia init [--db %s]
   aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
   aletheia run --checkpoint checkpoints/tiny-actions --prompt "<USER>fix failing go test<ASSISTANT>"
+  aletheia index ./docs [--db %s]
+  aletheia ask --query "qué decisión tomamos sobre el selector?" [--db %s]
+  aletheia memory inspect [--db %s]
   aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap
-`, memory.DefaultDBPath, memory.DefaultDBPath)
+`, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
 }
 
@@ -160,6 +170,161 @@ func runModel(args []string) error {
 	}
 	fmt.Println("output:")
 	fmt.Println(decoded)
+	return nil
+}
+
+func runIndex(args []string) error {
+	fs := flag.NewFlagSet("index", flag.ContinueOnError)
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	chunkSize := fs.Int("chunk-size", retriever.DefaultChunkSize, "chunk size in runes")
+	chunkOverlap := fs.Int("chunk-overlap", retriever.DefaultChunkOverlap, "chunk overlap in runes")
+	maxFileBytes := fs.Int64("max-file-bytes", retriever.DefaultMaxFileBytes, "maximum file size to index")
+	path, flagArgs, err := splitIndexArgs(args)
+	if err != nil {
+		return err
+	}
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("index requires exactly one path")
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	report, err := (retriever.Indexer{Store: store}).IndexPath(context.Background(), path, retriever.IndexOptions{
+		ChunkSize:    *chunkSize,
+		ChunkOverlap: *chunkOverlap,
+		MaxFileBytes: *maxFileBytes,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("indexed: %s\n", report.Root)
+	fmt.Printf("scanned: %d\n", report.Scanned)
+	fmt.Printf("indexed_files: %d\n", report.Indexed)
+	fmt.Printf("skipped_unchanged: %d\n", report.SkippedUnchanged)
+	fmt.Printf("skipped_unsupported: %d\n", report.SkippedUnsupported)
+	fmt.Printf("skipped_too_large: %d\n", report.SkippedTooLarge)
+	fmt.Printf("chunks_written: %d\n", report.ChunksWritten)
+	fmt.Printf("memory database: %s\n", *dbPath)
+	return nil
+}
+
+func splitIndexArgs(args []string) (string, []string, error) {
+	var path string
+	var flagArgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flagArgs = append(flagArgs, arg)
+			if strings.Contains(arg, "=") {
+				continue
+			}
+			switch arg {
+			case "--db", "-db", "--chunk-size", "-chunk-size", "--chunk-overlap", "-chunk-overlap", "--max-file-bytes", "-max-file-bytes":
+				if i+1 >= len(args) {
+					return "", nil, fmt.Errorf("%s requires a value", arg)
+				}
+				i++
+				flagArgs = append(flagArgs, args[i])
+			}
+			continue
+		}
+		if path != "" {
+			return "", nil, fmt.Errorf("index requires exactly one path")
+		}
+		path = arg
+	}
+	return path, flagArgs, nil
+}
+
+func runAsk(args []string) error {
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	query := fs.String("query", "", "question to answer from indexed local memory")
+	topK := fs.Int("top-k", 5, "number of evidence chunks")
+	minConfidence := fs.Float64("min-confidence", retriever.DefaultMinConfidence, "minimum confidence threshold")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*query) == "" {
+		return fmt.Errorf("--query is required")
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	answer, err := (retriever.Retriever{Store: store}).Answer(context.Background(), *query, retriever.SearchOptions{
+		TopK:          *topK,
+		MinConfidence: *minConfidence,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("status: %s\n", answer.Status)
+	fmt.Printf("confidence: %.4f\n", answer.Confidence)
+	fmt.Println("answer:")
+	fmt.Println(answer.Text)
+	if len(answer.Citations) > 0 {
+		fmt.Println("evidence:")
+		for _, citation := range answer.Citations {
+			fmt.Printf("  %s chunk=%d offsets=%d-%d score=%.4f\n", citation.Path, citation.ChunkID, citation.OffsetStart, citation.OffsetEnd, citation.Score)
+		}
+	}
+	return nil
+}
+
+func runMemory(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("memory requires a subcommand")
+	}
+	switch args[0] {
+	case "inspect":
+		return runMemoryInspect(args[1:])
+	default:
+		return fmt.Errorf("unknown memory subcommand %q", args[0])
+	}
+}
+
+func runMemoryInspect(args []string) error {
+	fs := flag.NewFlagSet("memory inspect", flag.ContinueOnError)
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	latest := fs.Int("latest", 5, "latest indexed paths to show")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	stats, err := store.Inspect(context.Background(), *latest)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("documents: %d\n", stats.Documents)
+	fmt.Printf("chunks: %d\n", stats.Chunks)
+	fmt.Printf("nodes: %d\n", stats.Nodes)
+	fmt.Printf("edges: %d\n", stats.Edges)
+	if len(stats.LatestPaths) > 0 {
+		fmt.Println("latest:")
+		for _, path := range stats.LatestPaths {
+			fmt.Printf("  %s\n", path)
+		}
+	}
 	return nil
 }
 
