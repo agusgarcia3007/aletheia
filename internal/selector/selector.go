@@ -12,22 +12,22 @@ const (
 )
 
 type Candidate struct {
-	TokenID int
-	Action  string
-	LogProb float64
-	Source  string
+	TokenID int     `json:"token_id,omitempty"`
+	Action  string  `json:"action"`
+	LogProb float64 `json:"log_prob"`
+	Source  string  `json:"source,omitempty"`
 }
 
 type Snapshot struct {
-	HasRunTests        bool
-	LastVerifierStatus string
-	Parsed             bool
-	PatternFound       bool
-	HasCandidatePatch  bool
-	Verified           bool
-	Completed          bool
-	ToolCalls          int
-	MaxToolCalls       int
+	HasRunTests        bool   `json:"has_run_tests"`
+	LastVerifierStatus string `json:"last_verifier_status,omitempty"`
+	Parsed             bool   `json:"parsed"`
+	PatternFound       bool   `json:"pattern_found"`
+	HasCandidatePatch  bool   `json:"has_candidate_patch"`
+	Verified           bool   `json:"verified"`
+	Completed          bool   `json:"completed"`
+	ToolCalls          int    `json:"tool_calls"`
+	MaxToolCalls       int    `json:"max_tool_calls"`
 }
 
 type Decision struct {
@@ -38,6 +38,21 @@ type Decision struct {
 }
 
 type HeuristicSelector struct{}
+
+type CandidateGreedySelector struct{}
+
+func (CandidateGreedySelector) Select(_ Snapshot, candidates []Candidate) Decision {
+	best, ok := highestLogProbFunctionalCandidate(candidates)
+	if !ok {
+		return Decision{Action: ActAbstain, Confidence: 0.1, Reason: "no functional candidate", Source: "candidate_greedy"}
+	}
+	return Decision{
+		Action:     best.Action,
+		Confidence: 1,
+		Reason:     "selected highest-probability functional candidate",
+		Source:     best.Source,
+	}
+}
 
 func (HeuristicSelector) Select(snapshot Snapshot, candidates []Candidate) Decision {
 	desired, reason := desiredAction(snapshot)
@@ -122,6 +137,21 @@ func bestFunctionalCandidate(snapshot Snapshot, candidates []Candidate) (Candida
 		score := candidate.LogProb + stagePrior(snapshot, candidate.Action)
 		if !ok || score > bestScore {
 			best, bestScore, ok = candidate, score, true
+		}
+	}
+	return best, ok
+}
+
+func highestLogProbFunctionalCandidate(candidates []Candidate) (Candidate, bool) {
+	var best Candidate
+	bestScore := -1e100
+	ok := false
+	for _, candidate := range candidates {
+		if !IsFunctional(candidate.Action) {
+			continue
+		}
+		if !ok || candidate.LogProb > bestScore {
+			best, bestScore, ok = candidate, candidate.LogProb, true
 		}
 	}
 	return best, ok

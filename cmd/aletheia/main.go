@@ -38,6 +38,8 @@ func run(args []string) error {
 		return runInit(args[2:])
 	case "train":
 		return runTrain(args[2:])
+	case "train-selector":
+		return runTrainSelector(args[2:])
 	case "run":
 		return runModel(args[2:])
 	case "index":
@@ -63,11 +65,12 @@ func usage() error {
 Usage:
   aletheia init [--db %s]
   aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
+  aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
   aletheia run --checkpoint checkpoints/tiny-actions --prompt "<USER>fix failing go test<ASSISTANT>"
   aletheia index ./docs [--db %s]
   aletheia ask --query "qué decisión tomamos sobre el selector?" [--db %s]
   aletheia memory inspect [--db %s]
-  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
+  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
@@ -115,6 +118,40 @@ func runTrain(args []string) error {
 	}
 	fmt.Printf("checkpoint: %s\n", report.CheckpointPath)
 	fmt.Printf("steps: %d\n", report.Steps)
+	fmt.Printf("initial_loss: %.6f\n", report.InitialLoss)
+	fmt.Printf("final_loss: %.6f\n", report.FinalLoss)
+	fmt.Printf("initial_accuracy: %.4f\n", report.InitialAccuracy)
+	fmt.Printf("final_accuracy: %.4f\n", report.FinalAccuracy)
+	return nil
+}
+
+func runTrainSelector(args []string) error {
+	fs := flag.NewFlagSet("train-selector", flag.ContinueOnError)
+	datasetPath := fs.String("dataset", "datasets/selector_bootstrap.jsonl", "selector JSONL training dataset")
+	outDir := fs.String("out", "checkpoints/selector-bootstrap", "selector checkpoint output directory")
+	epochs := fs.Int("epochs", 300, "training epochs")
+	learningRate := fs.Float64("learning-rate", 0.1, "learning rate")
+	minConfidence := fs.Float64("min-confidence", selector.DefaultMinConfidence, "minimum selector confidence before heuristic fallback")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	examples, err := selector.LoadTrainingExamples(*datasetPath)
+	if err != nil {
+		return err
+	}
+	model, report, err := selector.TrainLinear(examples, selector.TrainOptions{
+		Epochs:        *epochs,
+		LearningRate:  *learningRate,
+		MinConfidence: *minConfidence,
+	})
+	if err != nil {
+		return err
+	}
+	if err := model.Save(*outDir); err != nil {
+		return err
+	}
+	fmt.Printf("selector_checkpoint: %s\n", *outDir)
+	fmt.Printf("epochs: %d\n", report.Epochs)
 	fmt.Printf("initial_loss: %.6f\n", report.InitialLoss)
 	fmt.Printf("final_loss: %.6f\n", report.FinalLoss)
 	fmt.Printf("initial_accuracy: %.4f\n", report.InitialAccuracy)
@@ -334,6 +371,7 @@ func runSolve(args []string) error {
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	timeout := fs.Duration("timeout", 60*time.Second, "verifier timeout")
 	checkpoint := fs.String("checkpoint", "", "optional model checkpoint directory")
+	selectorCheckpoint := fs.String("selector-checkpoint", "", "optional learned selector checkpoint directory")
 	maxSteps := fs.Int("max-steps", 8, "maximum Cognitive VM action steps")
 	searchStrategy := fs.String("search", "greedy", "search strategy: greedy or beam")
 	beamWidth := fs.Int("beam-width", 4, "beam search width")
@@ -371,11 +409,20 @@ func runSolve(args []string) error {
 		}
 	}
 
+	var actionSelector cognitivevm.ActionSelector
+	if *selectorCheckpoint != "" {
+		learned, err := selector.LoadLinear(*selectorCheckpoint)
+		if err != nil {
+			return err
+		}
+		actionSelector = learned
+	}
+
 	solver := cognitivevm.Solver{
 		DBPath:          *dbPath,
 		VerifierTimeout: *timeout,
 		Planner:         planner,
-		Selector:        selector.HeuristicSelector{},
+		Selector:        actionSelector,
 		MaxSteps:        *maxSteps,
 		SearchStrategy:  *searchStrategy,
 		BeamWidth:       *beamWidth,
@@ -430,7 +477,12 @@ func runEval(args []string) error {
 	for _, c := range report.Cases {
 		fmt.Printf("%s:\n", c.Name)
 		fmt.Printf("  candidate_greedy: %s\n", c.CandidateGreedyStatus)
-		fmt.Printf("  beam: %s\n", c.BeamStatus)
+		if c.BeamStatus != "" {
+			fmt.Printf("  beam: %s\n", c.BeamStatus)
+		}
+		if c.LearnedSelectorStatus != "" {
+			fmt.Printf("  learned_selector: %s\n", c.LearnedSelectorStatus)
+		}
 		fmt.Printf("  improvement: %v\n", c.Improved)
 	}
 	if !report.Improved() {

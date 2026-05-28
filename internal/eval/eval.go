@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"aletheia/internal/cognitivevm"
@@ -26,6 +25,7 @@ type CaseResult struct {
 	Name                  string
 	CandidateGreedyStatus string
 	BeamStatus            string
+	LearnedSelectorStatus string
 	Improved              bool
 }
 
@@ -52,18 +52,30 @@ func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
 	if err != nil {
 		return BootstrapReport{}, err
 	}
-	result, err := runCandidateGreedyVsBeam(ctx)
+	beamResult, err := runCandidateGreedyVsBeam(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	learnedResult, err := runLearnedSelectorVsCandidateGreedy(ctx, selectorDatasetPath(info.Path))
 	if err != nil {
 		return BootstrapReport{}, err
 	}
 	return BootstrapReport{
 		Suite: info,
-		Cases: []CaseResult{{
-			Name:                  "candidate_greedy_vs_beam",
-			CandidateGreedyStatus: result.greedyStatus,
-			BeamStatus:            result.beamStatus,
-			Improved:              result.improved,
-		}},
+		Cases: []CaseResult{
+			{
+				Name:                  "candidate_greedy_vs_beam",
+				CandidateGreedyStatus: beamResult.greedyStatus,
+				BeamStatus:            beamResult.beamStatus,
+				Improved:              beamResult.improved,
+			},
+			{
+				Name:                  "learned_selector_vs_candidate_greedy",
+				CandidateGreedyStatus: learnedResult.greedyStatus,
+				LearnedSelectorStatus: learnedResult.learnedStatus,
+				Improved:              learnedResult.improved,
+			},
+		},
 	}, nil
 }
 
@@ -80,9 +92,10 @@ func (r BootstrapReport) Improved() bool {
 }
 
 type bootstrapComparison struct {
-	greedyStatus string
-	beamStatus   string
-	improved     bool
+	greedyStatus  string
+	beamStatus    string
+	learnedStatus string
+	improved      bool
 }
 
 func runCandidateGreedyVsBeam(ctx context.Context) (bootstrapComparison, error) {
@@ -97,7 +110,7 @@ func runCandidateGreedyVsBeam(ctx context.Context) (bootstrapComparison, error) 
 		DBPath:          filepath.Join(root, "greedy.sqlite"),
 		VerifierTimeout: 20 * time.Second,
 		Planner:         planner,
-		Selector:        topCandidateSelector{},
+		Selector:        selector.CandidateGreedySelector{},
 		MaxSteps:        8,
 	}).SolveFile(ctx, taskPath, root)
 	if err != nil {
@@ -131,31 +144,66 @@ func runCandidateGreedyVsBeam(ctx context.Context) (bootstrapComparison, error) 
 	}, nil
 }
 
+func runLearnedSelectorVsCandidateGreedy(ctx context.Context, datasetPath string) (bootstrapComparison, error) {
+	examples, err := selector.LoadTrainingExamples(datasetPath)
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	learned, report, err := selector.TrainLinear(examples, selector.TrainOptions{Epochs: 300, LearningRate: 0.1})
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	if report.FinalAccuracy < 1 {
+		return bootstrapComparison{}, fmt.Errorf("learned selector bootstrap accuracy %.4f, want 1", report.FinalAccuracy)
+	}
+
+	root, taskPath, err := writeBootstrapBuggyRepo()
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	defer os.RemoveAll(root)
+	planner := noisyPlanner{}
+	greedy, err := (cognitivevm.Solver{
+		DBPath:          filepath.Join(root, "greedy.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		Planner:         planner,
+		Selector:        selector.CandidateGreedySelector{},
+		MaxSteps:        8,
+	}).SolveFile(ctx, taskPath, root)
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+
+	root, taskPath, err = writeBootstrapBuggyRepo()
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	defer os.RemoveAll(root)
+	learnedResult, err := (cognitivevm.Solver{
+		DBPath:          filepath.Join(root, "learned.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		Planner:         planner,
+		Selector:        learned,
+		MaxSteps:        8,
+	}).SolveFile(ctx, taskPath, root)
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+
+	greedyPass := greedy.Patched && greedy.Final.Status == "pass"
+	learnedPass := learnedResult.Patched && learnedResult.Final.Status == "pass"
+	return bootstrapComparison{
+		greedyStatus:  passStatus(greedyPass),
+		learnedStatus: passStatus(learnedPass),
+		improved:      !greedyPass && learnedPass,
+	}, nil
+}
+
 func passStatus(pass bool) string {
 	if pass {
 		return "pass"
 	}
 	return "failed"
-}
-
-type topCandidateSelector struct{}
-
-func (topCandidateSelector) Select(_ selector.Snapshot, candidates []selector.Candidate) selector.Decision {
-	filtered := append([]selector.Candidate(nil), candidates...)
-	sort.SliceStable(filtered, func(i, j int) bool {
-		return filtered[i].LogProb > filtered[j].LogProb
-	})
-	for _, candidate := range filtered {
-		if selector.IsFunctional(candidate.Action) {
-			return selector.Decision{
-				Action:     candidate.Action,
-				Confidence: 1,
-				Reason:     "selected highest-probability functional candidate",
-				Source:     candidate.Source,
-			}
-		}
-	}
-	return selector.Decision{Action: selector.ActAbstain, Confidence: 0.1, Reason: "no functional candidate", Source: "candidate_greedy"}
 }
 
 type noisyPlanner struct{}
@@ -248,4 +296,9 @@ func TestAdd(t *testing.T) {
 		return "", "", err
 	}
 	return root, taskPath, nil
+}
+
+func selectorDatasetPath(suitePath string) string {
+	root := filepath.Dir(filepath.Dir(suitePath))
+	return filepath.Join(root, "datasets", "selector_bootstrap.jsonl")
 }

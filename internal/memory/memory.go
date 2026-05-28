@@ -347,6 +347,14 @@ func (s *Store) RecordTrajectory(ctx context.Context, episodeID int64, records [
 	return nil
 }
 
+func (s *Store) RecordSelectorExample(ctx context.Context, episodeID int64, labelSuffix string, payload string) (int64, error) {
+	if payload == "" {
+		payload = "{}"
+	}
+	label := fmt.Sprintf("episode:%d:selector_example:%s", episodeID, labelSuffix)
+	return s.EnsureNode(ctx, "selector_example", label, payload)
+}
+
 func (s *Store) Chunks(ctx context.Context) ([]Chunk, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT c.id, c.document_id, d.path, c.offset_start, c.offset_end, c.text, COALESCE(c.embedding_id, ''), d.updated_at
@@ -388,6 +396,12 @@ func (s *Store) GraphEdges(ctx context.Context) ([]Edge, error) {
 		out = append(out, edge)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) NodeCountByType(ctx context.Context, typ string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE type = ?`, typ).Scan(&count)
+	return count, err
 }
 
 func (s *Store) Inspect(ctx context.Context, latestLimit int) (InspectStats, error) {

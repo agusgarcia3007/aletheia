@@ -61,6 +61,9 @@ func TestSolverFixesToyBugAndRecordsEvidence(t *testing.T) {
 	if len(result.Trace[0].Verifiers) == 0 || result.Trace[0].Verifiers[0] != "go_test" {
 		t.Fatalf("trace missing verifier names: %+v", result.Trace[0])
 	}
+	if result.Trace[1].VerifierStatus != "" || len(result.Trace[1].Verifiers) != 0 {
+		t.Fatalf("non-verifier trace entry should not inherit verifier evidence: %+v", result.Trace[1])
+	}
 	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +130,11 @@ func TestSolverBeamFixesToyBugAndRecordsTrajectory(t *testing.T) {
 	if len(result.Trace) == 0 || result.Trace[0].Action != ActionRunTests {
 		t.Fatalf("trace should start with initial verifier evidence: %+v", result.Trace)
 	}
+	for _, entry := range result.Trace {
+		if (entry.Action == ActionParseCode || entry.Action == ActionMutateCode) && (entry.VerifierStatus != "" || len(entry.Verifiers) != 0) {
+			t.Fatalf("non-verifier beam trace entry inherited verifier evidence: %+v", entry)
+		}
+	}
 	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +154,13 @@ func TestSolverBeamFixesToyBugAndRecordsTrajectory(t *testing.T) {
 	if stats.Nodes == 0 || stats.Edges == 0 {
 		t.Fatalf("trajectory graph was not recorded: %+v", stats)
 	}
+	selectorExamples, err := store.NodeCountByType(context.Background(), "selector_example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selectorExamples == 0 {
+		t.Fatal("beam did not record selector examples")
+	}
 	edges, err := store.GraphEdges(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -158,6 +173,54 @@ func TestSolverBeamFixesToyBugAndRecordsTrajectory(t *testing.T) {
 	}
 	if selected == 0 {
 		t.Fatalf("selected trajectory edges missing: %+v", edges)
+	}
+}
+
+func TestSolverLearnedSelectorBeatsCandidateGreedyWithoutBeam(t *testing.T) {
+	root, taskPath, _ := writeBuggyTask(t, true)
+	greedy := Solver{
+		DBPath:          filepath.Join(root, "greedy.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		Planner:         noisyActionPlanner{},
+		Selector:        selector.CandidateGreedySelector{},
+		MaxSteps:        8,
+	}
+	greedyResult, err := greedy.SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if greedyResult.Patched {
+		t.Fatalf("candidate greedy unexpectedly patched repo: %+v", greedyResult)
+	}
+
+	root, taskPath, repo := writeBuggyTask(t, true)
+	learned := learnedSelectorForTest(t)
+	solver := Solver{
+		DBPath:          filepath.Join(root, "learned.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		Planner:         noisyActionPlanner{},
+		Selector:        learned,
+		MaxSteps:        8,
+		VerifierNames:   []string{"static_go_parse", "go_test"},
+	}
+	result, err := solver.SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Patched || result.Final.Status != "pass" {
+		t.Fatalf("learned selector result = %+v", result)
+	}
+	for _, entry := range result.Trace {
+		if (entry.Action == ActionParseCode || entry.Action == ActionMutateCode) && (entry.VerifierStatus != "" || len(entry.Verifiers) != 0) {
+			t.Fatalf("non-verifier learned-selector trace entry inherited verifier evidence: %+v", entry)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a + b") {
+		t.Fatalf("learned selector did not patch repo:\n%s", got)
 	}
 }
 
@@ -323,4 +386,87 @@ func TestAdd(t *testing.T) {
 
 func fmtInt(v int) string {
 	return strconv.Itoa(v)
+}
+
+type noisyActionPlanner struct{}
+
+func (noisyActionPlanner) Candidates(_ context.Context, state State) ([]selector.Candidate, error) {
+	good := desiredActionForTest(state.Snapshot())
+	if good == "" {
+		good = selector.ActAbstain
+	}
+	bad := selector.ActRespond
+	if good == selector.ActRespond {
+		bad = selector.ActAbstain
+	}
+	out := []selector.Candidate{
+		{Action: bad, LogProb: 0, Source: "noisy_bad"},
+		{Action: good, LogProb: -0.1, Source: "noisy_good"},
+	}
+	for _, action := range []string{selector.ActRunTests, selector.ActParseCode, selector.ActMutateCode, selector.ActVerify, selector.ActRespond, selector.ActAbstain} {
+		if action == good || action == bad {
+			continue
+		}
+		out = append(out, selector.Candidate{Action: action, LogProb: -0.5, Source: "noisy"})
+	}
+	return out, nil
+}
+
+func desiredActionForTest(snapshot selector.Snapshot) string {
+	if snapshot.Completed {
+		return ""
+	}
+	if snapshot.Verified || snapshot.LastVerifierStatus == "pass" {
+		return selector.ActRespond
+	}
+	if !snapshot.HasRunTests {
+		return selector.ActRunTests
+	}
+	if snapshot.LastVerifierStatus == "fail" && !snapshot.Parsed {
+		return selector.ActParseCode
+	}
+	if snapshot.Parsed && snapshot.PatternFound && !snapshot.HasCandidatePatch {
+		return selector.ActMutateCode
+	}
+	if snapshot.HasCandidatePatch && !snapshot.Verified {
+		return selector.ActVerify
+	}
+	return selector.ActAbstain
+}
+
+func learnedSelectorForTest(t *testing.T) selector.LinearSelector {
+	t.Helper()
+	model, report, err := selector.TrainLinear([]selector.TrainingExample{
+		{Snapshot: selector.Snapshot{MaxToolCalls: 8}, Candidates: noisyCandidatesForTest(selector.ActRunTests), Chosen: selector.ActRunTests, Reward: 1},
+		{Snapshot: selector.Snapshot{HasRunTests: true, LastVerifierStatus: "fail", ToolCalls: 1, MaxToolCalls: 8}, Candidates: noisyCandidatesForTest(selector.ActParseCode), Chosen: selector.ActParseCode, Reward: 1},
+		{Snapshot: selector.Snapshot{HasRunTests: true, LastVerifierStatus: "fail", Parsed: true, PatternFound: true, ToolCalls: 1, MaxToolCalls: 8}, Candidates: noisyCandidatesForTest(selector.ActMutateCode), Chosen: selector.ActMutateCode, Reward: 1},
+		{Snapshot: selector.Snapshot{HasRunTests: true, LastVerifierStatus: "fail", Parsed: true, PatternFound: true, HasCandidatePatch: true, ToolCalls: 1, MaxToolCalls: 8}, Candidates: noisyCandidatesForTest(selector.ActVerify), Chosen: selector.ActVerify, Reward: 1},
+		{Snapshot: selector.Snapshot{HasRunTests: true, LastVerifierStatus: "pass", ToolCalls: 1, MaxToolCalls: 8}, Candidates: noisyCandidatesForTest(selector.ActRespond), Chosen: selector.ActRespond, Reward: 1},
+		{Snapshot: selector.Snapshot{Verified: true, ToolCalls: 2, MaxToolCalls: 8}, Candidates: noisyCandidatesForTest(selector.ActRespond), Chosen: selector.ActRespond, Reward: 1},
+	}, selector.TrainOptions{Epochs: 300, LearningRate: 0.1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FinalAccuracy < 1 {
+		t.Fatalf("learned selector accuracy = %.4f", report.FinalAccuracy)
+	}
+	return model
+}
+
+func noisyCandidatesForTest(good string) []selector.Candidate {
+	bad := selector.ActRespond
+	if good == selector.ActRespond {
+		bad = selector.ActAbstain
+	}
+	out := []selector.Candidate{
+		{Action: bad, LogProb: 0, Source: "noisy_bad"},
+		{Action: good, LogProb: -0.1, Source: "noisy_good"},
+	}
+	for _, action := range []string{selector.ActRunTests, selector.ActParseCode, selector.ActMutateCode, selector.ActVerify, selector.ActRespond, selector.ActAbstain} {
+		if action == good || action == bad {
+			continue
+		}
+		out = append(out, selector.Candidate{Action: action, LogProb: -0.5, Source: "noisy"})
+	}
+	return out
 }

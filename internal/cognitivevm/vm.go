@@ -117,13 +117,14 @@ func (vm VM) Run(ctx context.Context, task Task, repoPath string, planner Planne
 			Reason: decision.Reason,
 			Source: decision.Source,
 		}
+		verifierCount := len(state.VerifierResults)
 		if err := vm.Execute(ctx, &state, action); err != nil {
 			trace.Status = "error"
 			state.ActionTrace = append(state.ActionTrace, trace)
 			return state, err
 		}
 		trace.Status = state.FinalStatus
-		if len(state.VerifierResults) > 0 {
+		if len(state.VerifierResults) > verifierCount {
 			last := state.VerifierResults[len(state.VerifierResults)-1]
 			trace.VerifierStatus = last.Status
 			trace.Verifiers = append([]string(nil), last.Artifacts...)

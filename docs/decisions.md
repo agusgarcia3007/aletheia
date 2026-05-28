@@ -46,3 +46,13 @@
 - Score beam states with a deterministic local reward based on verifier pass/fail, candidate patches, discovered patterns, evidence, depth, and branch errors.
 - Persist beam trajectories in the existing `nodes` and `edges` graph as `trajectory_state` records without adding a migration.
 - Use a programmatic bootstrap eval where candidate-greedy fails on a noisy planner and beam preserves the verified branch.
+
+## Milestone 6
+
+- Use logistic regression as the first trainable selector instead of reusing the micro-transformer.
+- Keep the learned selector opt-in through `--selector-checkpoint`; the heuristic selector remains the default safe path.
+- Store selector checkpoints as JSON in a separate directory from generative model checkpoints.
+- Train and evaluate the selector from a deterministic local JSONL bootstrap dataset.
+- Persist selector examples from beam as `selector_example` graph nodes without adding a SQLite migration.
+- Extend bootstrap eval with an A/B where candidate-greedy fails and the learned selector passes.
+- Attach verifier status to trace entries only when that action actually produced new verifier evidence.

@@ -91,6 +91,7 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 	if planner == nil {
 		planner = MockPlanner{}
 	}
+	selectorProvided := s.Selector != nil
 	actionSelector := s.Selector
 	if actionSelector == nil {
 		actionSelector = selector.HeuristicSelector{}
@@ -106,7 +107,7 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 	case "", "greedy":
 		state, err = vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
 	case "beam":
-		state, err = s.runBeam(ctx, task, repoPath, planner, vm)
+		state, err = s.runBeam(ctx, task, repoPath, planner, actionSelector, selectorProvided, vm)
 	default:
 		return Result{}, fmt.Errorf("unsupported search strategy %q", s.SearchStrategy)
 	}

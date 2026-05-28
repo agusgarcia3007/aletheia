@@ -2,6 +2,7 @@ package cognitivevm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,7 @@ import (
 	"aletheia/internal/verifier"
 )
 
-func (s Solver) runBeam(ctx context.Context, task Task, repoPath string, planner Planner, vm VM) (State, error) {
+func (s Solver) runBeam(ctx context.Context, task Task, repoPath string, planner Planner, actionSelector ActionSelector, useSelector bool, vm VM) (State, error) {
 	depth := s.MaxDepth
 	if depth <= 0 {
 		depth = s.MaxSteps
@@ -68,6 +69,7 @@ func (s Solver) runBeam(ctx context.Context, task Task, repoPath string, planner
 		return initial, nil
 	}
 
+	candidatesByNode := map[int][]selector.Candidate{}
 	result, err := search.Beam(ctx, search.Options[State]{
 		Initial:      initial,
 		BeamWidth:    width,
@@ -75,7 +77,15 @@ func (s Solver) runBeam(ctx context.Context, task Task, repoPath string, planner
 		ErrorReward:  -30,
 		IsFunctional: selector.IsFunctional,
 		Candidates: func(ctx context.Context, node search.Node[State]) ([]selector.Candidate, error) {
-			return planner.Candidates(ctx, node.State)
+			candidates, err := planner.Candidates(ctx, node.State)
+			if err != nil {
+				return nil, err
+			}
+			candidatesByNode[node.ID] = append([]selector.Candidate(nil), candidates...)
+			if useSelector && actionSelector != nil {
+				return selectorAdjustedCandidates(node.State.Snapshot(), candidates, actionSelector), nil
+			}
+			return candidates, nil
 		},
 		Step: func(ctx context.Context, node search.Node[State], candidate selector.Candidate) (search.StepResult[State], error) {
 			tempRoot, workspace, err := copyRepo(node.State.RepoPath)
@@ -95,6 +105,7 @@ func (s Solver) runBeam(ctx context.Context, task Task, repoPath string, planner
 				Reason: fmt.Sprintf("beam expanded candidate logprob %.4f", candidate.LogProb),
 				Source: candidate.Source,
 			}
+			verifierCount := len(child.VerifierResults)
 			executeErr := vm.Execute(ctx, &child, action)
 			if executeErr != nil {
 				trace.Status = "error"
@@ -109,7 +120,7 @@ func (s Solver) runBeam(ctx context.Context, task Task, repoPath string, planner
 				}, nil
 			}
 			trace.Status = child.FinalStatus
-			if len(child.VerifierResults) > 0 {
+			if len(child.VerifierResults) > verifierCount {
 				last := child.VerifierResults[len(child.VerifierResults)-1]
 				trace.VerifierStatus = last.Status
 				trace.Verifiers = append([]string(nil), last.Artifacts...)
@@ -132,10 +143,25 @@ func (s Solver) runBeam(ctx context.Context, task Task, repoPath string, planner
 	if err := persistBeamTrajectory(ctx, vm.Store, vm.EpisodeID, result); err != nil {
 		return State{}, err
 	}
+	if err := persistBeamSelectorExamples(ctx, vm.Store, vm.EpisodeID, result, candidatesByNode); err != nil {
+		return State{}, err
+	}
 	if !result.Found {
 		return abstainedBeamState(ctx, repoPath, vm, result.Best)
 	}
 	return materializeBeamWinner(ctx, repoPath, vm, result.Verified.State)
+}
+
+func selectorAdjustedCandidates(snapshot selector.Snapshot, candidates []selector.Candidate, actionSelector ActionSelector) []selector.Candidate {
+	adjusted := append([]selector.Candidate(nil), candidates...)
+	decision := actionSelector.Select(snapshot, candidates)
+	for i := range adjusted {
+		if adjusted[i].Action == decision.Action {
+			adjusted[i].LogProb += 20 * decision.Confidence
+			adjusted[i].Source = adjusted[i].Source + "+selector"
+		}
+	}
+	return adjusted
 }
 
 func beamReward(state State, depth int, branchError string) float64 {
@@ -246,6 +272,47 @@ func persistBeamTrajectory(ctx context.Context, store *memory.Store, episodeID i
 		})
 	}
 	return store.RecordTrajectory(ctx, episodeID, records)
+}
+
+func persistBeamSelectorExamples(ctx context.Context, store *memory.Store, episodeID int64, result search.Result[State], candidatesByNode map[int][]selector.Candidate) error {
+	if store == nil || episodeID == 0 {
+		return nil
+	}
+	for _, node := range result.Nodes {
+		if node.ParentID == 0 || node.Action == "" {
+			continue
+		}
+		parent, ok := searchNodeByID(result.Nodes, node.ParentID)
+		if !ok {
+			continue
+		}
+		candidates := candidatesByNode[parent.ID]
+		if len(candidates) == 0 {
+			continue
+		}
+		payload, err := json.Marshal(selector.TrainingExample{
+			Snapshot:   parent.State.Snapshot(),
+			Candidates: candidates,
+			Chosen:     node.Action,
+			Reward:     node.Reward,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := store.RecordSelectorExample(ctx, episodeID, fmt.Sprintf("%d", node.ID), string(payload)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func searchNodeByID(nodes []search.Node[State], id int) (search.Node[State], bool) {
+	for _, node := range nodes {
+		if node.ID == id {
+			return node, true
+		}
+	}
+	return search.Node[State]{}, false
 }
 
 func cloneStateForRepo(state State, repoPath string) State {

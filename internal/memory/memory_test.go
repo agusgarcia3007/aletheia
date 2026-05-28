@@ -172,6 +172,39 @@ func TestRecordTrajectoryCreatesGraph(t *testing.T) {
 	}
 }
 
+func TestRecordSelectorExampleCreatesNode(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	episodeID, err := store.CreateEpisode(ctx, "fix failing test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordSelectorExample(ctx, episodeID, "node-2", `{"chosen":"<ACT_RUN_TESTS>"}`); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := store.Inspect(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Nodes != 1 {
+		t.Fatalf("nodes = %d, want 1", stats.Nodes)
+	}
+	count, err := store.NodeCountByType(ctx, "selector_example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("selector_example nodes = %d, want 1", count)
+	}
+}
+
 func itoa64(v int64) string {
 	return strconv.FormatInt(v, 10)
 }
