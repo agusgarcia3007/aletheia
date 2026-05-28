@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"aletheia/internal/memory"
+	"aletheia/internal/verifier"
 )
 
 const (
@@ -83,6 +84,7 @@ type Citation struct {
 type Answer struct {
 	Text       string
 	Status     string
+	Verified   bool
 	Confidence float64
 	Citations  []Citation
 	Hits       []Hit
@@ -265,6 +267,7 @@ func (r Retriever) Answer(ctx context.Context, query string, opts SearchOptions)
 		sentence = hits[0].Preview
 	}
 	citations := make([]Citation, 0, len(hits))
+	textCitations := make([]verifier.TextEvidenceCitation, 0, len(hits))
 	for _, hit := range hits {
 		citations = append(citations, Citation{
 			Path:        hit.Path,
@@ -273,10 +276,24 @@ func (r Retriever) Answer(ctx context.Context, query string, opts SearchOptions)
 			OffsetEnd:   hit.OffsetEnd,
 			Score:       hit.Score,
 		})
+		textCitations = append(textCitations, verifier.TextEvidenceCitation{
+			ChunkID: hit.ChunkID,
+			Text:    hit.Text,
+		})
+	}
+	textEvidence := verifier.VerifyTextEvidence(sentence, textCitations)
+	if textEvidence.Status != verifier.StatusPass {
+		return Answer{
+			Text:       "No hay evidencia local suficiente para responder.",
+			Status:     "abstained",
+			Confidence: hits[0].Score,
+			Hits:       hits,
+		}, nil
 	}
 	return Answer{
 		Text:       sentence,
 		Status:     "answered",
+		Verified:   true,
 		Confidence: hits[0].Score,
 		Citations:  citations,
 		Hits:       hits,

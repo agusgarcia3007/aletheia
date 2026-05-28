@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 
 	"aletheia/internal/model"
@@ -13,8 +14,10 @@ import (
 type Options struct {
 	Temperature float64
 	TopK        int
+	TopP        float64
 	MaxTokens   int
 	StopTokens  []int
+	Seed        int64
 }
 
 type Candidate struct {
@@ -57,7 +60,10 @@ func (r Runner) Generate(prompt string, opts Options) ([]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		next := greedy(logits)
+		next, err := r.nextToken(logits, opts, i)
+		if err != nil {
+			return nil, err
+		}
 		tokens = append(tokens, next)
 		if stop[next] {
 			break
@@ -120,6 +126,67 @@ func (r Runner) Score(tokens []int) (float64, error) {
 		score += math.Log(float64(probs[target]))
 	}
 	return score, nil
+}
+
+func (r Runner) nextToken(logits []float32, opts Options, step int) (int, error) {
+	if opts.Temperature <= 0 {
+		return greedy(logits), nil
+	}
+	topP := opts.TopP
+	if topP <= 0 || topP > 1 {
+		topP = 1
+	}
+	scaled := make([]float32, len(logits))
+	temp := float32(opts.Temperature)
+	for i, logit := range logits {
+		scaled[i] = logit / temp
+	}
+	probs, err := tensor.Softmax(scaled)
+	if err != nil {
+		return 0, err
+	}
+	indices := make([]int, len(probs))
+	for i := range indices {
+		indices[i] = i
+	}
+	sort.Slice(indices, func(i, j int) bool {
+		return probs[indices[i]] > probs[indices[j]]
+	})
+	if opts.TopK > 0 && opts.TopK < len(indices) {
+		indices = indices[:opts.TopK]
+	}
+	var nucleus []int
+	cumulative := float32(0)
+	for _, id := range indices {
+		nucleus = append(nucleus, id)
+		cumulative += probs[id]
+		if float64(cumulative) >= topP {
+			break
+		}
+	}
+	if len(nucleus) == 0 {
+		return greedy(logits), nil
+	}
+	total := 0.0
+	for _, id := range nucleus {
+		total += float64(probs[id])
+	}
+	if total <= 0 {
+		return greedy(logits), nil
+	}
+	seed := opts.Seed
+	if seed == 0 {
+		seed = r.Model.Config.Seed
+	}
+	rng := rand.New(rand.NewSource(seed + int64(step+1)*7919))
+	draw := rng.Float64() * total
+	for _, id := range nucleus {
+		draw -= float64(probs[id])
+		if draw <= 0 {
+			return id, nil
+		}
+	}
+	return nucleus[len(nucleus)-1], nil
 }
 
 func greedy(logits []float32) int {

@@ -114,6 +114,73 @@ memory:
 	}
 }
 
+func TestRunMemoryGraphListsFilteredNodes(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "memory.sqlite")
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	episodeID, err := store.CreateEpisode(context.Background(), "fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordCausalNode(context.Background(), episodeID, "patch_candidate", "001", map[string]any{"status": "candidate_patch"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "memory", "graph", "--db", dbPath, "--type", "patch_candidate"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "nodes: 1") || !strings.Contains(out, "type=patch_candidate") {
+		t.Fatalf("memory graph output:\n%s", out)
+	}
+}
+
+func TestRunLearnExportsMemoryDatasets(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "memory.sqlite")
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	episodeID, err := store.CreateEpisode(context.Background(), "learn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"snapshot":{"max_tool_calls":8},"candidates":[{"action":"<ACT_RUN_TESTS>","log_prob":-0.1}],"chosen":"<ACT_RUN_TESTS>","reward":1}`
+	if _, err := store.RecordSelectorExample(context.Background(), episodeID, "1", payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	outDir := filepath.Join(root, "generated")
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "learn", "--db", dbPath, "--out", outDir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "selector_examples: 1") {
+		t.Fatalf("learn output:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "selector_examples.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunEvalJSON(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return run([]string{"aletheia", "eval", "--suite", "../../evals/bootstrap", "--json"})

@@ -106,14 +106,14 @@ The verifier bus stores structured evidence.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer.Status != "answered" || !strings.Contains(answer.Text, "heuristic selector") || len(answer.Citations) == 0 {
+	if answer.Status != "answered" || !answer.Verified || !strings.Contains(answer.Text, "heuristic selector") || len(answer.Citations) == 0 {
 		t.Fatalf("answer = %+v", answer)
 	}
 	noHit, err := r.Answer(ctx, "zqxj impossible unrelated query", SearchOptions{TopK: 1, MinConfidence: 99})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if noHit.Status != "abstained" {
+	if noHit.Status != "abstained" || noHit.Verified {
 		t.Fatalf("no-hit answer = %+v", noHit)
 	}
 }

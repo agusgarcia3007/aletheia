@@ -21,12 +21,16 @@ const (
 	StatusFail    = "fail"
 	StatusUnknown = "unknown"
 
-	GoTestCommand     = "go test ./..."
-	GoTestRaceCommand = "go test -race ./..."
-	GoVetCommand      = "go vet ./..."
+	GoTestCommand      = "go test ./..."
+	GoTestRaceCommand  = "go test -race ./..."
+	GoTestFuzzCommand  = "go test -run ^$ -fuzz Fuzz -fuzztime 1s ./..."
+	GoTestBenchCommand = "go test -bench . ./..."
+	GoVetCommand       = "go vet ./..."
 
 	GoTestName        = "go_test"
 	GoTestRaceName    = "go_test_race"
+	GoTestFuzzName    = "go_test_fuzz"
+	GoTestBenchName   = "go_test_bench"
 	GoVetName         = "go_vet"
 	StaticGoParseName = "static_go_parse"
 
@@ -95,6 +99,10 @@ func NewBus(names []string) (Bus, error) {
 			verifiers = append(verifiers, CommandVerifier{NameValue: GoTestName, Command: GoTestCommand, Seconds: 60})
 		case GoTestRaceName:
 			verifiers = append(verifiers, CommandVerifier{NameValue: GoTestRaceName, Command: GoTestRaceCommand, Seconds: 120})
+		case GoTestFuzzName:
+			verifiers = append(verifiers, CommandVerifier{NameValue: GoTestFuzzName, Command: GoTestFuzzCommand, Seconds: 20})
+		case GoTestBenchName:
+			verifiers = append(verifiers, CommandVerifier{NameValue: GoTestBenchName, Command: GoTestBenchCommand, Seconds: 20})
 		case GoVetName:
 			verifiers = append(verifiers, CommandVerifier{NameValue: GoVetName, Command: GoVetCommand, Seconds: 60})
 		case StaticGoParseName:
@@ -109,7 +117,7 @@ func NewBus(names []string) (Bus, error) {
 	return Bus{Verifiers: verifiers}, nil
 }
 
-func ParseNames(csv string, includeVet bool, includeRace bool) ([]string, error) {
+func ParseNames(csv string, includeVet bool, includeRace bool, includeFuzz bool, includeBench bool) ([]string, error) {
 	var names []string
 	if strings.TrimSpace(csv) == "" {
 		names = append(names, GoTestName)
@@ -126,6 +134,12 @@ func ParseNames(csv string, includeVet bool, includeRace bool) ([]string, error)
 	}
 	if includeRace && !contains(names, GoTestRaceName) {
 		names = append(names, GoTestRaceName)
+	}
+	if includeFuzz && !contains(names, GoTestFuzzName) {
+		names = append(names, GoTestFuzzName)
+	}
+	if includeBench && !contains(names, GoTestBenchName) {
+		names = append(names, GoTestBenchName)
 	}
 	_, err := NewBus(names)
 	return names, err
@@ -474,6 +488,12 @@ func allowedGoCommand(fields []string) (CommandSpec, bool) {
 			return CommandSpec{Argv: fields}, true
 		}
 	}
+	if len(fields) == 9 && fields[1] == "test" && fields[2] == "-run" && fields[4] == "-fuzz" && fields[6] == "-fuzztime" && fields[8] == "./..." {
+		if !safePattern(fields[3]) || !safePattern(fields[5]) || !safeDuration(fields[7]) {
+			return CommandSpec{}, false
+		}
+		return CommandSpec{Argv: fields}, true
+	}
 	return CommandSpec{}, false
 }
 
@@ -523,6 +543,18 @@ func safePattern(pattern string) bool {
 	return pattern != "" && !strings.HasPrefix(pattern, "-") && !strings.ContainsAny(pattern, "\x00\n\r")
 }
 
+func safeDuration(value string) bool {
+	if value == "" || strings.ContainsAny(value, "\x00\n\r") {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && r != 'm' && r != 's' && r != 'h' && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
 func safeRelativePath(path string) bool {
 	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\n\r") {
 		return false
@@ -537,6 +569,14 @@ func commandName(command string) string {
 	if len(fields) >= 2 && fields[0] == "go" && fields[1] == "test" {
 		if len(fields) >= 3 && fields[2] == "-race" {
 			return GoTestRaceName
+		}
+		for _, field := range fields {
+			if field == "-fuzz" {
+				return GoTestFuzzName
+			}
+			if field == "-bench" {
+				return GoTestBenchName
+			}
 		}
 		return GoTestName
 	}

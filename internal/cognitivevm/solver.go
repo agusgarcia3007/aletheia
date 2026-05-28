@@ -154,6 +154,8 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 			state, err = vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
 		case "beam":
 			state, err = s.runBeam(ctx, task, repoPath, planner, actionSelector, selectorProvided, vm)
+		case "mcts":
+			state, err = s.runMCTS(ctx, task, repoPath, planner, actionSelector, selectorProvided, vm)
 		default:
 			return Result{}, fmt.Errorf("unsupported search strategy %q", s.SearchStrategy)
 		}

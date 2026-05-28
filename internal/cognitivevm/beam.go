@@ -322,6 +322,13 @@ func cloneStateForRepo(state State, repoPath string) State {
 	state.Evidence = append([]verifier.Evidence(nil), state.Evidence...)
 	state.VerifierResults = append([]verifier.Evidence(nil), state.VerifierResults...)
 	state.ActionTrace = cloneTrace(state.ActionTrace)
+	if state.CausalNodes != nil {
+		causal := make(map[string]int64, len(state.CausalNodes))
+		for key, value := range state.CausalNodes {
+			causal[key] = value
+		}
+		state.CausalNodes = causal
+	}
 	if state.Counterexample != nil {
 		counterexample := *state.Counterexample
 		state.Counterexample = &counterexample

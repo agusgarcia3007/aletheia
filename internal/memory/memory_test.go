@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"aletheia/internal/selector"
@@ -205,6 +206,47 @@ func TestRecordSelectorExampleCreatesNode(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("selector_example nodes = %d, want 1", count)
+	}
+}
+
+func TestRecordCausalNodeCountsAndGraphFilter(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	episodeID, err := store.CreateEpisode(ctx, "fix failing test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failureID, err := store.RecordCausalNode(ctx, episodeID, "test_failure", "001", map[string]any{"status": "fail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patchID, err := store.RecordCausalNode(ctx, episodeID, "patch_candidate", "002", map[string]any{"status": "candidate_patch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsureEdge(ctx, patchID, failureID, "fixes", 1); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := store.Inspect(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Nodes != 2 || len(stats.NodeTypes) != 2 {
+		t.Fatalf("stats = %+v, want causal node type counts", stats)
+	}
+	patches, err := store.GraphNodes(ctx, "patch_candidate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patches) != 1 || patches[0].Type != "patch_candidate" || !strings.Contains(patches[0].Payload, "candidate_patch") {
+		t.Fatalf("patch nodes = %+v", patches)
 	}
 }
 

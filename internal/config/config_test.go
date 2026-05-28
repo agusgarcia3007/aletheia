@@ -61,10 +61,25 @@ func TestInvalidSearchStrategy(t *testing.T) {
 	path := writeConfig(t, `model:
   vocab_size: 512
 search:
-  strategy: mcts
+  strategy: random
 `)
 	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "search.strategy") {
 		t.Fatalf("error = %v, want search.strategy", err)
+	}
+}
+
+func TestMCTSSearchStrategyLoads(t *testing.T) {
+	path := writeConfig(t, `model:
+  vocab_size: 512
+search:
+  strategy: mcts
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Search.Strategy != "mcts" {
+		t.Fatalf("strategy = %q, want mcts", cfg.Search.Strategy)
 	}
 }
 
@@ -96,8 +111,12 @@ verifiers:
   fuzz:
     enabled: true
 `)
-	if _, err := Load(fuzzEnabled); err == nil || !strings.Contains(err.Error(), "fuzz") {
-		t.Fatalf("error = %v, want fuzz unsupported", err)
+	cfg, err := Load(fuzzEnabled)
+	if err != nil {
+		t.Fatalf("enabled fuzz should load now that verifier exists: %v", err)
+	}
+	if strings.Join(cfg.EnabledVerifierNames(), ",") != strings.Join([]string{verifier.GoTestName, verifier.GoTestFuzzName}, ",") {
+		t.Fatalf("fuzz verifiers = %v", cfg.EnabledVerifierNames())
 	}
 }
 
@@ -116,18 +135,21 @@ verifiers:
   go_test_race:
     enabled: true
     timeout_seconds: 40
+  bench:
+    enabled: true
+    timeout_seconds: 50
 `)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(cfg.EnabledVerifierNames(), ",")
-	want := strings.Join([]string{verifier.StaticGoParseName, verifier.GoTestName, verifier.GoVetName, verifier.GoTestRaceName}, ",")
+	want := strings.Join([]string{verifier.StaticGoParseName, verifier.GoTestName, verifier.GoVetName, verifier.GoTestRaceName, verifier.GoTestBenchName}, ",")
 	if got != want {
 		t.Fatalf("verifier order = %s, want %s", got, want)
 	}
-	if cfg.EffectiveVerifierTimeout().Seconds() != 40 {
-		t.Fatalf("timeout = %s, want 40s", cfg.EffectiveVerifierTimeout())
+	if cfg.EffectiveVerifierTimeout().Seconds() != 50 {
+		t.Fatalf("timeout = %s, want 50s", cfg.EffectiveVerifierTimeout())
 	}
 }
 

@@ -74,7 +74,7 @@
 - Keep config opt-in through `--config`; without it, existing CLI defaults remain unchanged.
 - Let explicit CLI flags override all config-derived defaults.
 - Validate verifier config against the existing allowlist and keep enabled verifier order deterministic.
-- Declare `fuzz` in config but reject `fuzz.enabled=true` until a local verifier exists.
+- Declare `fuzz` in config as disabled until a local verifier exists.
 - Use `memory.graph_enabled=false` to skip retriever graph writes without changing the SQLite schema.
 
 ## Milestone 9
@@ -97,3 +97,52 @@
 - Introduce `<ACT_FIND_COUNTEREXAMPLE>` and `<ACT_REPAIR>` while keeping `<ACT_MUTATE_CODE>` as a compatibility path.
 - Keep repairs as patch candidates only; files are still written only during `<ACT_VERIFY>`.
 - Start with small text/AST-adjacent rules and reject unknown failures instead of generating broad edits.
+
+## Milestone 12
+
+- Persist causal solve state in the existing `nodes` and `edges` graph without migrations.
+- Use typed causal nodes for `test_failure`, `counterexample`, `repair_attempt`, `patch_candidate`, and `verified_patch`.
+- Record causal edges such as `derived_from`, `failed_because`, `verifies`, `fixes`, and `breaks` only from verified local events.
+- Extend `memory inspect` and add `memory graph` for textual graph inspection instead of adding a new graph database.
+
+## Milestone 13
+
+- Make document QA citation-gated: answered responses must cite existing chunks.
+- Add `TextEvidenceVerifier` as a local verifier for answer/citation consistency.
+- Print `verified: true|false` from `ask` and abstain when citation evidence is missing or unsupported.
+- Keep hallucination accounting tied to answered responses without valid citation support.
+
+## Milestone 14
+
+- Add generic MCTS to `internal/search` without importing `cognitivevm`.
+- Keep MCTS opt-in through `solve --search mcts` and config `search.strategy: mcts`; beam remains the stable search option.
+- Persist MCTS nodes as `trajectory_state` records with `visits`, `value`, `prior`, and reward metadata.
+- Add a bootstrap eval where candidate-greedy fails and MCTS preserves the verified branch.
+
+## Milestone 15
+
+- Add `aletheia learn` as a manual local learning command, not a daemon.
+- Export `selector_example` nodes and verified trajectories from memory into reproducible JSONL files.
+- Optionally retrain the linear selector from exported examples with `--train-selector-out`.
+- Report eval metrics before and after the learning run when a suite is provided.
+
+## Milestone 16
+
+- Enable costly verifiers only opt-in: `go_test_fuzz` and `go_test_bench`.
+- Keep fuzz and bench execution behind the centralized no-shell allowlist with strict command shapes.
+- Add `solve --fuzz` and `solve --bench` so normal solve cost is unchanged.
+- Store command, timeout behavior, truncated output markers, and status in the existing evidence payload path.
+
+## Milestone 17
+
+- Keep `Runner.Score(sequence)` as the local logprob path for trajectories.
+- Add real temperature/top-p/top-k sampling to generation while preserving greedy behavior when temperature is zero.
+- Add `configs/core-100m.yaml` as a manual target only; it is not part of automatic tests.
+- Defer model scaling until evals show a checkpoint beats the mock/heuristic baseline.
+
+## Milestone 18
+
+- Consolidate public contracts in docs instead of relying only on tests.
+- Document real CLI smoke checks in `docs/testing.md`.
+- Keep memory graph payloads and generated datasets JSON-based for inspectability.
+- Leave ternary/int8, mixture of experts, overnight daemon, and private frontier benchmarks out of the core path for now.

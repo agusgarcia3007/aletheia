@@ -13,6 +13,7 @@ import (
 	"aletheia/internal/cognitivevm"
 	"aletheia/internal/config"
 	"aletheia/internal/eval"
+	"aletheia/internal/learning"
 	"aletheia/internal/memory"
 	"aletheia/internal/model"
 	"aletheia/internal/retriever"
@@ -56,6 +57,8 @@ func run(args []string) error {
 		return runSolve(args[2:])
 	case "eval":
 		return runEval(args[2:])
+	case "learn":
+		return runLearn(args[2:])
 	case "-h", "--help", "help":
 		return usage()
 	default:
@@ -76,9 +79,11 @@ Usage:
   aletheia ask --query "qué decisión tomamos sobre el selector?" [--config configs/micro.yaml] [--db %s]
   aletheia memory inspect [--config configs/micro.yaml] [--db %s]
   aletheia memory skills [--config configs/micro.yaml] [--db %s]
-  aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
+  aletheia memory graph [--config configs/micro.yaml] [--db %s] [--type patch_candidate]
+  aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam|mcts] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap [--json]
-`, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
+  aletheia learn --db %s --suite evals/bootstrap --out datasets/generated [--train-selector-out checkpoints/selector-generated]
+`, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
 }
 
@@ -235,6 +240,8 @@ func runModel(args []string) error {
 	prompt := fs.String("prompt", "", "prompt text")
 	maxTokens := fs.Int("max-tokens", 32, "maximum generated tokens")
 	topK := fs.Int("top-k", 8, "top-k candidates to print from the first step")
+	temperature := fs.Float64("temperature", -1, "sampling temperature; <=0 keeps greedy generation")
+	topP := fs.Float64("top-p", -1, "nucleus sampling threshold")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -252,6 +259,18 @@ func runModel(args []string) error {
 		if !flagWasSet(fs, "top-k") {
 			*topK = cfg.Inference.TopK
 		}
+		if !flagWasSet(fs, "temperature") {
+			*temperature = cfg.Inference.Temperature
+		}
+		if !flagWasSet(fs, "top-p") {
+			*topP = cfg.Inference.TopP
+		}
+	}
+	if *temperature < 0 {
+		*temperature = 0
+	}
+	if *topP < 0 {
+		*topP = 1
 	}
 	if *prompt == "" {
 		return fmt.Errorf("--prompt is required")
@@ -265,8 +284,11 @@ func runModel(args []string) error {
 	eos, _ := tok.ID("<EOS>")
 	actRespond, _ := tok.ID("<ACT_RESPOND>")
 	tokens, err := r.Generate(*prompt, runner.Options{
-		MaxTokens:  *maxTokens,
-		StopTokens: []int{eos, actRespond},
+		MaxTokens:   *maxTokens,
+		TopK:        *topK,
+		TopP:        *topP,
+		Temperature: *temperature,
+		StopTokens:  []int{eos, actRespond},
 	})
 	if err != nil {
 		return err
@@ -424,6 +446,7 @@ func runAsk(args []string) error {
 		return err
 	}
 	fmt.Printf("status: %s\n", answer.Status)
+	fmt.Printf("verified: %v\n", answer.Verified)
 	fmt.Printf("confidence: %.4f\n", answer.Confidence)
 	fmt.Println("answer:")
 	fmt.Println(answer.Text)
@@ -445,6 +468,8 @@ func runMemory(args []string) error {
 		return runMemoryInspect(args[1:])
 	case "skills":
 		return runMemorySkills(args[1:])
+	case "graph":
+		return runMemoryGraph(args[1:])
 	default:
 		return fmt.Errorf("unknown memory subcommand %q", args[0])
 	}
@@ -482,11 +507,72 @@ func runMemoryInspect(args []string) error {
 	fmt.Printf("skills: %d\n", stats.Skills)
 	fmt.Printf("nodes: %d\n", stats.Nodes)
 	fmt.Printf("edges: %d\n", stats.Edges)
+	if len(stats.NodeTypes) > 0 {
+		fmt.Println("node_types:")
+		for _, item := range stats.NodeTypes {
+			fmt.Printf("  %s: %d\n", item.Type, item.Count)
+		}
+	}
 	if len(stats.LatestPaths) > 0 {
 		fmt.Println("latest:")
 		for _, path := range stats.LatestPaths {
 			fmt.Printf("  %s\n", path)
 		}
+	}
+	return nil
+}
+
+func runMemoryGraph(args []string) error {
+	fs := flag.NewFlagSet("memory graph", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	nodeType := fs.String("type", "", "optional node type filter")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	nodes, err := store.GraphNodes(context.Background(), *nodeType)
+	if err != nil {
+		return err
+	}
+	edges, err := store.GraphEdges(context.Background())
+	if err != nil {
+		return err
+	}
+	if *nodeType != "" {
+		nodeIDs := make(map[int64]bool, len(nodes))
+		for _, node := range nodes {
+			nodeIDs[node.ID] = true
+		}
+		filtered := edges[:0]
+		for _, edge := range edges {
+			if nodeIDs[edge.FromNode] || nodeIDs[edge.ToNode] {
+				filtered = append(filtered, edge)
+			}
+		}
+		edges = filtered
+	}
+	fmt.Printf("nodes: %d\n", len(nodes))
+	for _, node := range nodes {
+		fmt.Printf("  %d type=%s label=%s payload=%s\n", node.ID, node.Type, node.Label, compactPayload(node.Payload))
+	}
+	fmt.Printf("edges: %d\n", len(edges))
+	for _, edge := range edges {
+		fmt.Printf("  %d %d -[%s %.2f]-> %d\n", edge.ID, edge.FromNode, edge.Relation, edge.Weight, edge.ToNode)
 	}
 	return nil
 }
@@ -524,6 +610,14 @@ func runMemorySkills(args []string) error {
 	return nil
 }
 
+func compactPayload(payload string) string {
+	payload = strings.TrimSpace(payload)
+	if len(payload) <= 240 {
+		return payload
+	}
+	return payload[:240] + "...[truncated]"
+}
+
 func runSolve(args []string) error {
 	fs := flag.NewFlagSet("solve", flag.ContinueOnError)
 	configPath := fs.String("config", "", "configuration YAML path")
@@ -533,13 +627,15 @@ func runSolve(args []string) error {
 	checkpoint := fs.String("checkpoint", "", "optional model checkpoint directory")
 	selectorCheckpoint := fs.String("selector-checkpoint", "", "optional learned selector checkpoint directory")
 	maxSteps := fs.Int("max-steps", 8, "maximum Cognitive VM action steps")
-	searchStrategy := fs.String("search", "greedy", "search strategy: greedy or beam")
+	searchStrategy := fs.String("search", "greedy", "search strategy: greedy, beam, or mcts")
 	beamWidth := fs.Int("beam-width", 4, "beam search width")
 	maxDepth := fs.Int("max-depth", 0, "beam search maximum depth; defaults to --max-steps")
 	useSkills := fs.Bool("use-skills", false, "reuse verified compressed skills when trigger matches")
 	verifierNamesCSV := fs.String("verifier", verifier.GoTestName, "comma-separated verifier names")
 	includeVet := fs.Bool("vet", false, "also run go_vet verifier")
 	includeRace := fs.Bool("race", false, "also run go_test_race verifier")
+	includeFuzz := fs.Bool("fuzz", false, "also run go_test_fuzz verifier")
+	includeBench := fs.Bool("bench", false, "also run go_test_bench verifier")
 	trace := fs.Bool("trace", false, "print Cognitive VM action trace")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -577,7 +673,7 @@ func runSolve(args []string) error {
 	if cfg != nil && !flagWasSet(fs, "verifier") {
 		verifierCSV = strings.Join(cfg.EnabledVerifierNames(), ",")
 	}
-	verifierNames, err := verifier.ParseNames(verifierCSV, *includeVet, *includeRace)
+	verifierNames, err := verifier.ParseNames(verifierCSV, *includeVet, *includeRace, *includeFuzz, *includeBench)
 	if err != nil {
 		return err
 	}
@@ -686,6 +782,9 @@ func runEval(args []string) error {
 		if c.BeamStatus != "" {
 			fmt.Printf("  beam: %s\n", c.BeamStatus)
 		}
+		if c.MCTSStatus != "" {
+			fmt.Printf("  mcts: %s\n", c.MCTSStatus)
+		}
 		if c.LearnedSelectorStatus != "" {
 			fmt.Printf("  learned_selector: %s\n", c.LearnedSelectorStatus)
 		}
@@ -705,6 +804,45 @@ func runEval(args []string) error {
 	fmt.Printf("  memory_hit_rate: %.4f\n", report.Metrics.MemoryHitRate)
 	if !report.Improved() {
 		return fmt.Errorf("eval bootstrap did not show beam improvement")
+	}
+	return nil
+}
+
+func runLearn(args []string) error {
+	fs := flag.NewFlagSet("learn", flag.ContinueOnError)
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	suitePath := fs.String("suite", "", "optional evaluation suite path")
+	outDir := fs.String("out", "", "generated dataset output directory")
+	trainSelectorOut := fs.String("train-selector-out", "", "optional selector checkpoint output directory")
+	epochs := fs.Int("epochs", 300, "selector training epochs when --train-selector-out is set")
+	learningRate := fs.Float64("learning-rate", 0.1, "selector learning rate when --train-selector-out is set")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	report, err := learning.Run(context.Background(), learning.Options{
+		DBPath:           *dbPath,
+		SuitePath:        *suitePath,
+		OutDir:           *outDir,
+		TrainSelectorOut: *trainSelectorOut,
+		Epochs:           *epochs,
+		LearningRate:     *learningRate,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("learn_out: %s\n", report.OutDir)
+	fmt.Printf("selector_examples: %d\n", report.SelectorExamples)
+	fmt.Printf("verified_trajectories: %d\n", report.VerifiedTrajectories)
+	fmt.Printf("skills: %d\n", report.Skills)
+	fmt.Printf("selector_dataset: %s\n", report.SelectorDatasetPath)
+	fmt.Printf("trajectory_dataset: %s\n", report.TrajectoryDatasetPath)
+	if report.SelectorCheckpoint != "" {
+		fmt.Printf("selector_checkpoint: %s\n", report.SelectorCheckpoint)
+		fmt.Printf("selector_final_accuracy: %.4f\n", report.SelectorTrainReport.FinalAccuracy)
+	}
+	if *suitePath != "" {
+		fmt.Printf("eval_before_verified_success_rate: %.4f\n", report.EvalBefore.VerifiedSuccessRate)
+		fmt.Printf("eval_after_verified_success_rate: %.4f\n", report.EvalAfter.VerifiedSuccessRate)
 	}
 	return nil
 }

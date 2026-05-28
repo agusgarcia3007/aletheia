@@ -46,6 +46,8 @@ func TestAllowlistedCommandShapes(t *testing.T) {
 		"go test ./...",
 		"go test -run TestAdd ./...",
 		"go test -bench BenchmarkAdd ./...",
+		"go test -bench . ./...",
+		"go test -run ^$ -fuzz Fuzz -fuzztime 1s ./...",
 		"go vet ./...",
 		"rg Add calculator.go",
 		"git diff",
@@ -162,16 +164,35 @@ func TestBusAggregates(t *testing.T) {
 	}
 }
 
+func TestTextEvidenceVerifierRequiresCitationsAndSupport(t *testing.T) {
+	pass := VerifyTextEvidence("The selector uses local evidence.", []TextEvidenceCitation{
+		{ChunkID: 1, Text: "The selector uses local verifier evidence."},
+	})
+	if pass.Status != StatusPass {
+		t.Fatalf("pass evidence = %+v", pass)
+	}
+	noCitation := VerifyTextEvidence("The selector uses local evidence.", nil)
+	if noCitation.Status != StatusFail {
+		t.Fatalf("no citation evidence = %+v", noCitation)
+	}
+	unsupported := VerifyTextEvidence("Remote model decides everything.", []TextEvidenceCitation{
+		{ChunkID: 2, Text: "The selector uses local verifier evidence."},
+	})
+	if unsupported.Status != StatusFail {
+		t.Fatalf("unsupported evidence = %+v", unsupported)
+	}
+}
+
 func TestParseNames(t *testing.T) {
-	names, err := ParseNames("static_go_parse,go_test", true, false)
+	names, err := ParseNames("static_go_parse,go_test", true, false, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{StaticGoParseName, GoTestName, GoVetName}
+	want := []string{StaticGoParseName, GoTestName, GoVetName, GoTestFuzzName, GoTestBenchName}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
-	if _, err := ParseNames("rm -rf /", false, false); err == nil {
+	if _, err := ParseNames("rm -rf /", false, false, false, false); err == nil {
 		t.Fatal("expected unknown verifier error")
 	}
 }

@@ -31,11 +31,13 @@ type CaseResult struct {
 	Status                string `json:"status"`
 	CandidateGreedyStatus string `json:"candidate_greedy_status,omitempty"`
 	BeamStatus            string `json:"beam_status,omitempty"`
+	MCTSStatus            string `json:"mcts_status,omitempty"`
 	LearnedSelectorStatus string `json:"learned_selector_status,omitempty"`
 	SkillReuseStatus      string `json:"skill_reuse_status,omitempty"`
 	BaselineToolCalls     int    `json:"baseline_tool_calls,omitempty"`
 	SkillToolCalls        int    `json:"skill_tool_calls,omitempty"`
 	ToolCalls             int    `json:"tool_calls,omitempty"`
+	Hallucinated          bool   `json:"hallucinated,omitempty"`
 	Improved              bool   `json:"improved"`
 }
 
@@ -96,6 +98,10 @@ func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
 	if err != nil {
 		return BootstrapReport{}, err
 	}
+	mctsResult, err := runCandidateGreedyVsMCTS(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
 	learnedResult, err := runLearnedSelectorVsCandidateGreedy(ctx, selectorDatasetPath(info.Path))
 	if err != nil {
 		return BootstrapReport{}, err
@@ -116,6 +122,13 @@ func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
 			CandidateGreedyStatus: beamResult.greedyStatus,
 			BeamStatus:            beamResult.beamStatus,
 			Improved:              beamResult.improved,
+		},
+		{
+			Name:                  "candidate_greedy_vs_mcts",
+			Status:                passStatus(mctsResult.improved),
+			CandidateGreedyStatus: mctsResult.greedyStatus,
+			MCTSStatus:            mctsResult.mctsStatus,
+			Improved:              mctsResult.improved,
 		},
 		{
 			Name:                  "learned_selector_vs_candidate_greedy",
@@ -160,6 +173,7 @@ func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
 	toolCalls := 0
 	memoryCases := 0
 	memoryHits := 0
+	hallucinations := 0
 	abstentionCases := 0
 	abstentionPass := 0
 	for _, c := range cases {
@@ -172,6 +186,9 @@ func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
 			memoryCases++
 			if c.Status == "pass" {
 				memoryHits++
+			}
+			if c.Hallucinated {
+				hallucinations++
 			}
 		case "abstention":
 			abstentionCases++
@@ -193,6 +210,7 @@ func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
 	}
 	if memoryCases > 0 {
 		metrics.MemoryHitRate = float64(memoryHits) / float64(memoryCases)
+		metrics.HallucinationRate = float64(hallucinations) / float64(memoryCases)
 	}
 	return metrics
 }
@@ -200,6 +218,7 @@ func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
 type bootstrapComparison struct {
 	greedyStatus      string
 	beamStatus        string
+	mctsStatus        string
 	learnedStatus     string
 	skillStatus       string
 	baselineToolCalls int
@@ -252,9 +271,9 @@ func runDocQA(ctx context.Context) (CaseResult, error) {
 	if err != nil {
 		return CaseResult{}, err
 	}
-	pass := answer.Status == "answered" && len(answer.Citations) > 0 && strings.Contains(strings.ToLower(answer.Text), "selector")
+	pass := answer.Status == "answered" && answer.Verified && len(answer.Citations) > 0 && strings.Contains(strings.ToLower(answer.Text), "selector")
 	_ = root
-	return CaseResult{Name: "doc_qa", Status: passStatus(pass), Improved: pass}, nil
+	return CaseResult{Name: "doc_qa", Status: passStatus(pass), Hallucinated: answer.Status == "answered" && !answer.Verified, Improved: pass}, nil
 }
 
 func runAbstention(ctx context.Context) (CaseResult, error) {
@@ -281,8 +300,8 @@ func runMemoryRecall(ctx context.Context) (CaseResult, error) {
 	if err != nil {
 		return CaseResult{}, err
 	}
-	pass := answer.Status == "answered" && len(answer.Citations) > 0 && strings.Contains(strings.ToLower(answer.Text), "config")
-	return CaseResult{Name: "memory", Status: passStatus(pass), Improved: pass}, nil
+	pass := answer.Status == "answered" && answer.Verified && len(answer.Citations) > 0 && strings.Contains(strings.ToLower(answer.Text), "config")
+	return CaseResult{Name: "memory", Status: passStatus(pass), Hallucinated: answer.Status == "answered" && !answer.Verified, Improved: pass}, nil
 }
 
 func indexedDocStore(name string, text string) (string, *memory.Store, func(), error) {
@@ -363,6 +382,52 @@ func runCandidateGreedyVsBeam(ctx context.Context) (bootstrapComparison, error) 
 		greedyStatus: passStatus(greedyPass),
 		beamStatus:   passStatus(beamPass),
 		improved:     !greedyPass && beamPass,
+	}, nil
+}
+
+func runCandidateGreedyVsMCTS(ctx context.Context) (bootstrapComparison, error) {
+	root, taskPath, err := writeBootstrapBuggyRepo()
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	defer os.RemoveAll(root)
+
+	planner := noisyPlanner{}
+	greedy, err := (cognitivevm.Solver{
+		DBPath:          filepath.Join(root, "greedy.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		Planner:         planner,
+		Selector:        selector.CandidateGreedySelector{},
+		MaxSteps:        8,
+	}).SolveFile(ctx, taskPath, root)
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+
+	root, taskPath, err = writeBootstrapBuggyRepo()
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+	defer os.RemoveAll(root)
+	mcts, err := (cognitivevm.Solver{
+		DBPath:          filepath.Join(root, "mcts.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		Planner:         planner,
+		MaxSteps:        8,
+		SearchStrategy:  "mcts",
+		BeamWidth:       2,
+		MaxDepth:        8,
+	}).SolveFile(ctx, taskPath, root)
+	if err != nil {
+		return bootstrapComparison{}, err
+	}
+
+	greedyPass := greedy.Patched && greedy.Final.Status == "pass"
+	mctsPass := mcts.Patched && mcts.Final.Status == "pass"
+	return bootstrapComparison{
+		greedyStatus: passStatus(greedyPass),
+		mctsStatus:   passStatus(mctsPass),
+		improved:     !greedyPass && mctsPass,
 	}, nil
 }
 

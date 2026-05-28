@@ -68,12 +68,20 @@ type Edge struct {
 	Weight   float64
 }
 
+type NodeTypeCount struct {
+	Type  string
+	Count int
+}
+
 type TrajectoryRecord struct {
 	SearchNodeID       int     `json:"search_node_id"`
 	ParentSearchNodeID int     `json:"parent_search_node_id,omitempty"`
 	Action             string  `json:"action,omitempty"`
 	Source             string  `json:"source,omitempty"`
 	Depth              int     `json:"depth"`
+	Visits             int     `json:"visits,omitempty"`
+	Prior              float64 `json:"prior,omitempty"`
+	Value              float64 `json:"value,omitempty"`
 	Reward             float64 `json:"reward"`
 	Score              float64 `json:"score"`
 	Status             string  `json:"status,omitempty"`
@@ -99,6 +107,7 @@ type InspectStats struct {
 	Skills      int
 	Nodes       int
 	Edges       int
+	NodeTypes   []NodeTypeCount
 	LatestPaths []string
 }
 
@@ -367,6 +376,24 @@ func (s *Store) RecordSelectorExample(ctx context.Context, episodeID int64, labe
 	return s.EnsureNode(ctx, "selector_example", label, payload)
 }
 
+func (s *Store) RecordCausalNode(ctx context.Context, episodeID int64, typ string, labelSuffix string, payload any) (int64, error) {
+	if typ == "" {
+		return 0, fmt.Errorf("causal node type is required")
+	}
+	if labelSuffix == "" {
+		labelSuffix = "state"
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, fmt.Errorf("marshal causal node payload: %w", err)
+	}
+	label := fmt.Sprintf("episode:%d:%s:%s", episodeID, typ, labelSuffix)
+	return s.EnsureNode(ctx, typ, label, string(raw))
+}
+
 func (s *Store) UpsertSkill(ctx context.Context, skill Skill) (Skill, error) {
 	if skill.Name == "" {
 		return Skill{}, fmt.Errorf("skill name is required")
@@ -509,10 +536,50 @@ func (s *Store) GraphEdges(ctx context.Context) ([]Edge, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) GraphNodes(ctx context.Context, typ string) ([]Node, error) {
+	query := `SELECT id, type, label, payload FROM nodes ORDER BY id`
+	args := []any{}
+	if typ != "" {
+		query = `SELECT id, type, label, payload FROM nodes WHERE type = ? ORDER BY id`
+		args = append(args, typ)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		var node Node
+		if err := rows.Scan(&node.ID, &node.Type, &node.Label, &node.Payload); err != nil {
+			return nil, err
+		}
+		out = append(out, node)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) NodeCountByType(ctx context.Context, typ string) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE type = ?`, typ).Scan(&count)
 	return count, err
+}
+
+func (s *Store) NodeCountsByType(ctx context.Context) ([]NodeTypeCount, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT type, COUNT(*) FROM nodes GROUP BY type ORDER BY type`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeTypeCount
+	for rows.Next() {
+		var item NodeTypeCount
+		if err := rows.Scan(&item.Type, &item.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) Inspect(ctx context.Context, latestLimit int) (InspectStats, error) {
@@ -531,6 +598,11 @@ func (s *Store) Inspect(ctx context.Context, latestLimit int) (InspectStats, err
 			return InspectStats{}, err
 		}
 	}
+	nodeTypes, err := s.NodeCountsByType(ctx)
+	if err != nil {
+		return InspectStats{}, err
+	}
+	stats.NodeTypes = nodeTypes
 	if latestLimit <= 0 {
 		latestLimit = 5
 	}

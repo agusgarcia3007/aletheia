@@ -27,7 +27,7 @@ func TestRunBootstrapReportsBeamImprovement(t *testing.T) {
 	if !report.Improved() {
 		t.Fatalf("report = %+v, want beam improvement", report)
 	}
-	if len(report.Cases) != 8 {
+	if len(report.Cases) != 9 {
 		t.Fatalf("cases = %+v", report.Cases)
 	}
 	for i, name := range []string{"go_compile", "go_tests", "doc_qa", "abstention", "memory"} {
@@ -38,11 +38,14 @@ func TestRunBootstrapReportsBeamImprovement(t *testing.T) {
 	if report.Cases[5].CandidateGreedyStatus != "failed" || report.Cases[5].BeamStatus != "pass" {
 		t.Fatalf("beam case = %+v", report.Cases[5])
 	}
-	if report.Cases[6].CandidateGreedyStatus != "failed" || report.Cases[6].LearnedSelectorStatus != "pass" {
-		t.Fatalf("learned selector case = %+v", report.Cases[6])
+	if report.Cases[6].CandidateGreedyStatus != "failed" || report.Cases[6].MCTSStatus != "pass" {
+		t.Fatalf("mcts case = %+v", report.Cases[6])
 	}
-	if report.Cases[7].SkillReuseStatus != "pass" || report.Cases[7].SkillToolCalls >= report.Cases[7].BaselineToolCalls {
-		t.Fatalf("skill reuse case = %+v", report.Cases[7])
+	if report.Cases[7].CandidateGreedyStatus != "failed" || report.Cases[7].LearnedSelectorStatus != "pass" {
+		t.Fatalf("learned selector case = %+v", report.Cases[7])
+	}
+	if report.Cases[8].SkillReuseStatus != "pass" || report.Cases[8].SkillToolCalls >= report.Cases[8].BaselineToolCalls {
+		t.Fatalf("skill reuse case = %+v", report.Cases[8])
 	}
 	if report.Metrics.VerifiedSuccessRate != 1 || report.Metrics.AbstentionAccuracy != 1 || report.Metrics.MemoryHitRate != 1 {
 		t.Fatalf("metrics = %+v", report.Metrics)

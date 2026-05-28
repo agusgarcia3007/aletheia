@@ -73,6 +73,7 @@ type VerifiersConfig struct {
 	GoVet         VerifierConfig `yaml:"go_vet"`
 	GoTestRace    VerifierConfig `yaml:"go_test_race"`
 	Fuzz          VerifierConfig `yaml:"fuzz"`
+	Bench         VerifierConfig `yaml:"bench"`
 }
 
 type VerifierConfig struct {
@@ -235,8 +236,8 @@ func (c Config) Validate() error {
 	if c.Inference.MaxTokens <= 0 {
 		return fmt.Errorf("inference.max_tokens must be positive")
 	}
-	if c.Search.Strategy != "greedy" && c.Search.Strategy != "beam" {
-		return fmt.Errorf("search.strategy must be greedy or beam")
+	if c.Search.Strategy != "greedy" && c.Search.Strategy != "beam" && c.Search.Strategy != "mcts" {
+		return fmt.Errorf("search.strategy must be greedy, beam, or mcts")
 	}
 	if c.Search.BeamWidth <= 0 {
 		return fmt.Errorf("search.beam_width must be positive")
@@ -293,12 +294,18 @@ func (v VerifiersConfig) EnabledNames() []string {
 	if v.GoTestRace.EnabledBool() {
 		names = append(names, verifier.GoTestRaceName)
 	}
+	if v.Fuzz.EnabledBool() {
+		names = append(names, verifier.GoTestFuzzName)
+	}
+	if v.Bench.EnabledBool() {
+		names = append(names, verifier.GoTestBenchName)
+	}
 	return names
 }
 
 func (v VerifiersConfig) EffectiveTimeoutSeconds() int {
 	maxSeconds := 0
-	for _, verifierConfig := range []VerifierConfig{v.StaticGoParse, v.GoTest, v.GoVet, v.GoTestRace} {
+	for _, verifierConfig := range []VerifierConfig{v.StaticGoParse, v.GoTest, v.GoVet, v.GoTestRace, v.Fuzz, v.Bench} {
 		if verifierConfig.EnabledBool() && verifierConfig.TimeoutSeconds > maxSeconds {
 			maxSeconds = verifierConfig.TimeoutSeconds
 		}
@@ -322,7 +329,8 @@ func (v *VerifiersConfig) applyDefaults() {
 	v.GoTest.applyDefaults(true, verifier.GoTestCommand, 60)
 	v.GoVet.applyDefaults(false, verifier.GoVetCommand, 60)
 	v.GoTestRace.applyDefaults(false, verifier.GoTestRaceCommand, 120)
-	v.Fuzz.applyDefaults(false, "", 120)
+	v.Fuzz.applyDefaults(false, verifier.GoTestFuzzCommand, 20)
+	v.Bench.applyDefaults(false, verifier.GoTestBenchCommand, 20)
 }
 
 func (v *VerifierConfig) applyDefaults(enabled bool, command string, timeoutSeconds int) {
@@ -350,11 +358,11 @@ func (v VerifiersConfig) validate() error {
 	if err := validateVerifier(verifier.GoTestRaceName, v.GoTestRace, verifier.GoTestRaceCommand); err != nil {
 		return err
 	}
-	if v.Fuzz.EnabledBool() {
-		return fmt.Errorf("verifiers.fuzz is declared but not supported yet")
+	if err := validateVerifier("fuzz", v.Fuzz, verifier.GoTestFuzzCommand); err != nil {
+		return err
 	}
-	if v.Fuzz.TimeoutSeconds < 0 {
-		return fmt.Errorf("verifiers.fuzz.timeout_seconds must be non-negative")
+	if err := validateVerifier("bench", v.Bench, verifier.GoTestBenchCommand); err != nil {
+		return err
 	}
 	return nil
 }

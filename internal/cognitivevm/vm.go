@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,6 +59,7 @@ type State struct {
 	PatternFound    bool
 	Verified        bool
 	ToolCalls       int
+	CausalNodes     map[string]int64
 }
 
 type PatchCandidate struct {
@@ -174,11 +176,11 @@ func (vm VM) Execute(ctx context.Context, state *State, action ActionToken) erro
 	case ActionParseCode:
 		return vm.parseCode(state)
 	case ActionMutateCode:
-		return vm.mutateCode(state)
+		return vm.mutateCode(ctx, state)
 	case ActionFindCounterexample:
-		return vm.findCounterexample(state)
+		return vm.findCounterexample(ctx, state)
 	case ActionRepair:
-		return vm.repairCode(state)
+		return vm.repairCode(ctx, state)
 	case ActionVerify:
 		return vm.verify(ctx, state)
 	case ActionRespond:
@@ -248,7 +250,20 @@ func (vm VM) runTests(ctx context.Context, state *State) error {
 	state.Evidence = append(state.Evidence, result.Evidence...)
 	state.VerifierResults = append(state.VerifierResults, result.Aggregate)
 	state.FinalStatus = result.Status
-	return vm.recordResult(ctx, result, string(ActionRunTests), "")
+	if err := vm.recordResult(ctx, result, string(ActionRunTests), ""); err != nil {
+		return err
+	}
+	if result.Status == verifier.StatusFail {
+		_, err := vm.recordCausal(ctx, state, "test_failure", map[string]any{
+			"action":          string(ActionRunTests),
+			"status":          result.Status,
+			"verifier_status": result.Aggregate.Status,
+			"verifiers":       result.Aggregate.Artifacts,
+			"summary":         verifierSummary(result),
+		})
+		return err
+	}
+	return nil
 }
 
 func (vm VM) runCommand(ctx context.Context, state *State, command string) error {
@@ -283,14 +298,14 @@ func (vm VM) parseCode(state *State) error {
 	return nil
 }
 
-func (vm VM) mutateCode(state *State) error {
+func (vm VM) mutateCode(ctx context.Context, state *State) error {
 	if !state.PatternFound {
 		return fmt.Errorf("cannot mutate without known pattern")
 	}
-	return vm.buildRepairCandidate(state)
+	return vm.buildRepairCandidate(ctx, state, ActionMutateCode)
 }
 
-func (vm VM) findCounterexample(state *State) error {
+func (vm VM) findCounterexample(ctx context.Context, state *State) error {
 	counterexample, ok := repair.ExtractCounterexample(state.Evidence)
 	if !ok {
 		counterexample, ok = repair.ExtractCounterexample(state.VerifierResults)
@@ -301,14 +316,25 @@ func (vm VM) findCounterexample(state *State) error {
 	state.Counterexample = &counterexample
 	state.WorkingMemory = append(state.WorkingMemory, "counterexample from "+counterexample.Verifier+": "+counterexample.Summary)
 	state.FinalStatus = "counterexample_found"
-	return nil
+	counterexampleNode, err := vm.recordCausal(ctx, state, "counterexample", map[string]any{
+		"action":   string(ActionFindCounterexample),
+		"verifier": counterexample.Verifier,
+		"status":   state.FinalStatus,
+		"summary":  counterexample.Summary,
+		"stdout":   truncateText(counterexample.Stdout, 2048),
+		"stderr":   truncateText(counterexample.Stderr, 2048),
+	})
+	if err != nil {
+		return err
+	}
+	return vm.edgeCausal(ctx, state.causalNode("test_failure"), counterexampleNode, "failed_because")
 }
 
-func (vm VM) repairCode(state *State) error {
-	return vm.buildRepairCandidate(state)
+func (vm VM) repairCode(ctx context.Context, state *State) error {
+	return vm.buildRepairCandidate(ctx, state, ActionRepair)
 }
 
-func (vm VM) buildRepairCandidate(state *State) error {
+func (vm VM) buildRepairCandidate(ctx context.Context, state *State, action ActionToken) error {
 	counterexample := repair.Counterexample{}
 	if state.Counterexample != nil {
 		counterexample = *state.Counterexample
@@ -326,7 +352,32 @@ func (vm VM) buildRepairCandidate(state *State) error {
 	}
 	state.Diff = diff
 	state.FinalStatus = "candidate_patch"
-	return nil
+	attemptNode, err := vm.recordCausal(ctx, state, "repair_attempt", map[string]any{
+		"action":         string(action),
+		"status":         state.FinalStatus,
+		"pattern_found":  state.PatternFound,
+		"counterexample": counterexample.Summary,
+	})
+	if err != nil {
+		return err
+	}
+	sourceNode := state.causalNode("counterexample")
+	if sourceNode == 0 {
+		sourceNode = state.causalNode("test_failure")
+	}
+	if err := vm.edgeCausal(ctx, sourceNode, attemptNode, "derived_from"); err != nil {
+		return err
+	}
+	patchNode, err := vm.recordCausal(ctx, state, "patch_candidate", map[string]any{
+		"action": string(action),
+		"status": state.FinalStatus,
+		"path":   repoRelativePath(state.RepoPath, candidate.Path),
+		"diff":   diff,
+	})
+	if err != nil {
+		return err
+	}
+	return vm.edgeCausal(ctx, attemptNode, patchNode, "derived_from")
 }
 
 func (vm VM) verify(ctx context.Context, state *State) error {
@@ -356,12 +407,33 @@ func (vm VM) verify(ctx context.Context, state *State) error {
 	if result.Status == verifier.StatusPass {
 		state.Verified = true
 		state.FinalStatus = "verified"
+		verifiedNode, err := vm.recordCausal(ctx, state, "verified_patch", map[string]any{
+			"action":          string(ActionVerify),
+			"status":          state.FinalStatus,
+			"verifier_status": result.Aggregate.Status,
+			"verifiers":       result.Aggregate.Artifacts,
+			"path":            repoRelativePath(state.RepoPath, patch.Path),
+			"patch_diff_hash": patchHash,
+			"diff":            patch.Diff,
+		})
+		if err != nil && verifyErr == nil {
+			verifyErr = err
+		}
+		if edgeErr := vm.edgeCausal(ctx, state.causalNode("patch_candidate"), verifiedNode, "verifies"); edgeErr != nil && verifyErr == nil {
+			verifyErr = edgeErr
+		}
+		if edgeErr := vm.edgeCausal(ctx, verifiedNode, state.causalNode("test_failure"), "fixes"); edgeErr != nil && verifyErr == nil {
+			verifyErr = edgeErr
+		}
 		return verifyErr
 	}
 	if err := os.WriteFile(patch.Path, []byte(original), 0o644); err != nil {
 		return err
 	}
 	state.FinalStatus = "verify_failed_rollback"
+	if edgeErr := vm.edgeCausal(ctx, state.causalNode("patch_candidate"), state.causalNode("test_failure"), "breaks"); edgeErr != nil && verifyErr == nil {
+		verifyErr = edgeErr
+	}
 	return verifyErr
 }
 
@@ -414,6 +486,85 @@ func (vm VM) recordResult(ctx context.Context, result verifier.Result, action st
 		}
 	}
 	return nil
+}
+
+func (vm VM) recordCausal(ctx context.Context, state *State, typ string, payload map[string]any) (int64, error) {
+	if vm.Store == nil || vm.EpisodeID == 0 {
+		return 0, nil
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["type"] = typ
+	payload["goal"] = state.Goal
+	payload["repo"] = state.RepoPath
+	payload["step"] = len(state.ActionTrace) + 1
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	suffix := fmt.Sprintf("%03d:%s", len(state.ActionTrace)+1, hashText(string(raw))[:12])
+	nodeID, err := vm.Store.RecordCausalNode(ctx, vm.EpisodeID, typ, suffix, payload)
+	if err != nil {
+		return 0, err
+	}
+	state.rememberCausalNode(typ, nodeID)
+	return nodeID, nil
+}
+
+func (vm VM) edgeCausal(ctx context.Context, fromNode int64, toNode int64, relation string) error {
+	if vm.Store == nil || vm.EpisodeID == 0 || fromNode == 0 || toNode == 0 || relation == "" {
+		return nil
+	}
+	_, err := vm.Store.EnsureEdge(ctx, fromNode, toNode, relation, 1)
+	return err
+}
+
+func (s *State) rememberCausalNode(typ string, nodeID int64) {
+	if nodeID == 0 {
+		return
+	}
+	if s.CausalNodes == nil {
+		s.CausalNodes = map[string]int64{}
+	}
+	s.CausalNodes[typ] = nodeID
+}
+
+func (s *State) causalNode(typ string) int64 {
+	if s.CausalNodes == nil {
+		return 0
+	}
+	return s.CausalNodes[typ]
+}
+
+func verifierSummary(result verifier.Result) string {
+	for _, ev := range result.Evidence {
+		if strings.TrimSpace(ev.ErrorSummary) != "" {
+			return ev.ErrorSummary
+		}
+		if strings.TrimSpace(ev.Stderr) != "" {
+			return truncateText(ev.Stderr, 2048)
+		}
+		if strings.TrimSpace(ev.Stdout) != "" {
+			return truncateText(ev.Stdout, 2048)
+		}
+	}
+	return result.Status
+}
+
+func repoRelativePath(repoPath string, path string) string {
+	rel, err := filepath.Rel(repoPath, path)
+	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return rel
+}
+
+func truncateText(text string, limit int) string {
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "\n[truncated]"
 }
 
 func (s State) lastVerifierStatus() string {

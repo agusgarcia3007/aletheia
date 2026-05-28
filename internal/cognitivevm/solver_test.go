@@ -84,6 +84,15 @@ func TestSolverFixesToyBugAndRecordsEvidence(t *testing.T) {
 	if payload["action"] != string(ActionRunTests) || payload["command"] != "go test ./..." {
 		t.Fatalf("unexpected payload: %v", payload)
 	}
+	for _, typ := range []string{"test_failure", "repair_attempt", "patch_candidate", "verified_patch"} {
+		count, err := store.NodeCountByType(context.Background(), typ)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count == 0 {
+			t.Fatalf("causal node type %s was not recorded", typ)
+		}
+	}
 }
 
 func TestSolverWithStaticParseAndGoTestVerifiers(t *testing.T) {
@@ -174,6 +183,50 @@ func TestSolverBeamFixesToyBugAndRecordsTrajectory(t *testing.T) {
 	}
 	if selected == 0 {
 		t.Fatalf("selected trajectory edges missing: %+v", edges)
+	}
+}
+
+func TestSolverMCTSFixesToyBugAndRecordsTrajectory(t *testing.T) {
+	root, taskPath, repo := writeBuggyTask(t, true)
+	dbPath := filepath.Join(root, "memory.sqlite")
+	solver := Solver{
+		DBPath:          dbPath,
+		VerifierTimeout: 20 * time.Second,
+		Planner:         noisyActionPlanner{},
+		MaxSteps:        8,
+		SearchStrategy:  "mcts",
+		BeamWidth:       2,
+		MaxDepth:        8,
+		VerifierNames:   []string{"static_go_parse", "go_test"},
+	}
+	result, err := solver.SolveFile(context.Background(), taskPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Patched || result.Final.Status != "pass" {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(result.Trace) == 0 || result.Trace[0].Source != "mcts" {
+		t.Fatalf("trace should start with mcts verifier evidence: %+v", result.Trace)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a + b") {
+		t.Fatalf("mcts did not apply verified patch to original repo:\n%s", got)
+	}
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	trajectories, err := store.NodeCountByType(context.Background(), "trajectory_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trajectories == 0 {
+		t.Fatal("mcts did not record trajectory states")
 	}
 }
 

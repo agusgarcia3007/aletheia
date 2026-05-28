@@ -5,30 +5,31 @@ project:
   memory_db: ./data/memory.sqlite
 
 model:
-  name: seed-10m
+  name: core-100m
   vocab_size: 512
-  context_length: 512
-  n_layers: 4
-  n_heads: 4
-  d_model: 256
-  d_ff: 1024
+  context_length: 1024
+  n_layers: 12
+  n_heads: 12
+  d_model: 768
+  d_ff: 3072
   dropout: 0.0
   rope: true
   norm: rmsnorm
   activation: swiglu
+  seed: 17
 
 training:
-  batch_size: 16
-  learning_rate: 0.0003
+  batch_size: 8
+  learning_rate: 0.0002
   weight_decay: 0.01
-  max_steps: 10000
+  max_steps: 50000
   grad_clip: 1.0
-  checkpoint_every: 500
-  eval_every: 250
+  checkpoint_every: 1000
+  eval_every: 500
 
 inference:
   temperature: 0.2
-  top_k: 16
+  top_k: 32
   top_p: 0.95
   max_tokens: 512
 
