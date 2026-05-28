@@ -10,3 +10,9 @@
 - Reject unsupported success commands before execution.
 - Keep `ALETHEIA_MU_PROMPT.md` as the source specification.
 
+## Milestone 1
+
+- Add a tiny CPU training path for automated acceptance and keep `seed-10m` as a manual config target.
+- Use a deterministic causal next-token model with float32 tensors and manual gradients so overfit checks run quickly on CPU.
+- Store checkpoints as `manifest.json` plus little-endian `weights.f32`.
+- Keep generated checkpoints ignored by git.

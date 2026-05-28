@@ -1,0 +1,100 @@
+{"prompt":"<USER>fix failing go test 001<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 002<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 003<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 004<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 005<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 006<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 007<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 008<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 009<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>fix failing go test 010<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 011<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 012<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 013<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 014<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 015<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 016<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 017<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 018<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 019<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>repair red test 020<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 021<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 022<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 023<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 024<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 025<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 026<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 027<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 028<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 029<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>go compile failure 030<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 031<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 032<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 033<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 034<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 035<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 036<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 037<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 038<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 039<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>make tests green 040<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 041<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 042<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 043<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 044<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 045<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 046<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 047<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 048<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 049<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>broken calculator add 050<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 051<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 052<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 053<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 054<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 055<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 056<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 057<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 058<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 059<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>unit test mismatch 060<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 061<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 062<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 063<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 064<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 065<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 066<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 067<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 068<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 069<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>failing package tests 070<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 071<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 072<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 073<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 074<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 075<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 076<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 077<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 078<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 079<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>need patch verified 080<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 081<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 082<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 083<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 084<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 085<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 086<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 087<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 088<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 089<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>inspect failing repo 090<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 091<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 092<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 093<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 094<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 095<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 096<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 097<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 098<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 099<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}
+{"prompt":"<USER>local verifier task 100<ASSISTANT>","completion":"<ACT_RUN_TESTS><ACT_PARSE_CODE><ACT_MUTATE_CODE><ACT_VERIFY><ACT_RESPOND>"}

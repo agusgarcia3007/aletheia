@@ -1,7 +1,8 @@
 bin/
 dist/
 coverage.out
+checkpoints/*
+!checkpoints/.gitkeep
 data/*.sqlite
 data/*.sqlite-*
 *.test
-

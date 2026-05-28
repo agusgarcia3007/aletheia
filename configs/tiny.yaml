@@ -1,0 +1,35 @@
+project:
+  name: aletheia-mu
+  data_dir: ./data
+  checkpoint_dir: ./checkpoints
+  memory_db: ./data/memory.sqlite
+
+model:
+  name: tiny-actions
+  vocab_size: 512
+  context_length: 64
+  n_layers: 1
+  n_heads: 2
+  d_model: 32
+  d_ff: 64
+  dropout: 0.0
+  rope: true
+  norm: rmsnorm
+  activation: swiglu
+  seed: 7
+
+training:
+  batch_size: 20
+  learning_rate: 0.08
+  weight_decay: 0.0
+  max_steps: 220
+  grad_clip: 5.0
+  checkpoint_every: 100
+  eval_every: 25
+
+inference:
+  temperature: 0.0
+  top_k: 8
+  top_p: 1.0
+  max_tokens: 32
+
