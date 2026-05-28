@@ -1,0 +1,7 @@
+bin/
+dist/
+coverage.out
+data/*.sqlite
+data/*.sqlite-*
+*.test
+

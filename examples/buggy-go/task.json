@@ -1,0 +1,6 @@
+{
+  "goal": "Fix the Go project so all tests pass.",
+  "repo": "./examples/buggy-go",
+  "success": "go test ./..."
+}
+
