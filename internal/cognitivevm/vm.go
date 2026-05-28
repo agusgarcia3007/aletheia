@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"aletheia/internal/memory"
+	"aletheia/internal/repair"
 	"aletheia/internal/runner"
 	"aletheia/internal/selector"
 	"aletheia/internal/verifier"
@@ -19,12 +20,15 @@ import (
 type ActionToken string
 
 const (
-	ActionRunTests   ActionToken = selector.ActRunTests
-	ActionParseCode  ActionToken = selector.ActParseCode
-	ActionMutateCode ActionToken = selector.ActMutateCode
-	ActionVerify     ActionToken = selector.ActVerify
-	ActionRespond    ActionToken = selector.ActRespond
-	ActionAbstain    ActionToken = selector.ActAbstain
+	ActionRunTests           ActionToken = selector.ActRunTests
+	ActionRunCmd             ActionToken = selector.ActRunCmd
+	ActionParseCode          ActionToken = selector.ActParseCode
+	ActionMutateCode         ActionToken = selector.ActMutateCode
+	ActionFindCounterexample ActionToken = selector.ActFindCounterexample
+	ActionRepair             ActionToken = selector.ActRepair
+	ActionVerify             ActionToken = selector.ActVerify
+	ActionRespond            ActionToken = selector.ActRespond
+	ActionAbstain            ActionToken = selector.ActAbstain
 )
 
 type Budget struct {
@@ -41,6 +45,7 @@ type State struct {
 	WorkingMemory   []string
 	Evidence        []verifier.Evidence
 	VerifierResults []verifier.Evidence
+	Counterexample  *repair.Counterexample
 	CandidatePatch  *PatchCandidate
 	ActionTrace     []TraceEntry
 	Uncertainty     float64
@@ -164,10 +169,16 @@ func (vm VM) Execute(ctx context.Context, state *State, action ActionToken) erro
 	switch action {
 	case ActionRunTests:
 		return vm.runTests(ctx, state)
+	case ActionRunCmd:
+		return vm.runCommand(ctx, state, state.Success)
 	case ActionParseCode:
 		return vm.parseCode(state)
 	case ActionMutateCode:
 		return vm.mutateCode(state)
+	case ActionFindCounterexample:
+		return vm.findCounterexample(state)
+	case ActionRepair:
+		return vm.repairCode(state)
 	case ActionVerify:
 		return vm.verify(ctx, state)
 	case ActionRespond:
@@ -206,10 +217,16 @@ func ParseAction(action string) (ActionToken, error) {
 	switch action {
 	case selector.ActRunTests:
 		return ActionRunTests, nil
+	case selector.ActRunCmd:
+		return ActionRunCmd, nil
 	case selector.ActParseCode:
 		return ActionParseCode, nil
 	case selector.ActMutateCode:
 		return ActionMutateCode, nil
+	case selector.ActFindCounterexample:
+		return ActionFindCounterexample, nil
+	case selector.ActRepair:
+		return ActionRepair, nil
 	case selector.ActVerify:
 		return ActionVerify, nil
 	case selector.ActRespond:
@@ -232,6 +249,18 @@ func (vm VM) runTests(ctx context.Context, state *State) error {
 	state.VerifierResults = append(state.VerifierResults, result.Aggregate)
 	state.FinalStatus = result.Status
 	return vm.recordResult(ctx, result, string(ActionRunTests), "")
+}
+
+func (vm VM) runCommand(ctx context.Context, state *State, command string) error {
+	result, err := vm.runVerifierBusCommand(ctx, state, command)
+	if err != nil {
+		return err
+	}
+	state.ToolCalls++
+	state.Evidence = append(state.Evidence, result.Evidence...)
+	state.VerifierResults = append(state.VerifierResults, result.Aggregate)
+	state.FinalStatus = result.Status
+	return vm.recordResult(ctx, result, string(ActionRunCmd), "")
 }
 
 func (vm VM) parseCode(state *State) error {
@@ -258,21 +287,41 @@ func (vm VM) mutateCode(state *State) error {
 	if !state.PatternFound {
 		return fmt.Errorf("cannot mutate without known pattern")
 	}
-	path := filepath.Join(state.RepoPath, "calculator.go")
-	raw, err := os.ReadFile(path)
+	return vm.buildRepairCandidate(state)
+}
+
+func (vm VM) findCounterexample(state *State) error {
+	counterexample, ok := repair.ExtractCounterexample(state.Evidence)
+	if !ok {
+		counterexample, ok = repair.ExtractCounterexample(state.VerifierResults)
+	}
+	if !ok {
+		return fmt.Errorf("no failing verifier evidence available")
+	}
+	state.Counterexample = &counterexample
+	state.WorkingMemory = append(state.WorkingMemory, "counterexample from "+counterexample.Verifier+": "+counterexample.Summary)
+	state.FinalStatus = "counterexample_found"
+	return nil
+}
+
+func (vm VM) repairCode(state *State) error {
+	return vm.buildRepairCandidate(state)
+}
+
+func (vm VM) buildRepairCandidate(state *State) error {
+	counterexample := repair.Counterexample{}
+	if state.Counterexample != nil {
+		counterexample = *state.Counterexample
+	}
+	candidate, err := repair.BuildCandidate(state.RepoPath, counterexample)
 	if err != nil {
 		return err
 	}
-	oldText := string(raw)
-	newText := strings.Replace(oldText, "return a - b", "return a + b", 1)
-	if oldText == newText {
-		return fmt.Errorf("toy patch pattern not found in %s", path)
-	}
-	diff := unifiedDiff("calculator.go", oldText, newText)
+	diff := unifiedDiff(filepath.Base(candidate.Path), candidate.OldText, candidate.NewText)
 	state.CandidatePatch = &PatchCandidate{
-		Path:    path,
-		OldText: oldText,
-		NewText: newText,
+		Path:    candidate.Path,
+		OldText: candidate.OldText,
+		NewText: candidate.NewText,
 		Diff:    diff,
 	}
 	state.Diff = diff
@@ -335,6 +384,11 @@ func (vm VM) runVerifierBus(ctx context.Context, state *State, patchDiffHash str
 	return result, nil
 }
 
+func (vm VM) runVerifierBusCommand(ctx context.Context, state *State, command string) (verifier.Result, error) {
+	ev := verifier.RunSandboxed(ctx, state.RepoPath, command, vm.VerifierTimeout, verifier.DefaultOutputLimit, "run_cmd")
+	return verifier.Aggregate([]verifier.Evidence{ev}), nil
+}
+
 func (vm VM) recordResult(ctx context.Context, result verifier.Result, action string, patchDiffHash string) error {
 	if vm.Store == nil || vm.EpisodeID == 0 {
 		return nil
@@ -374,6 +428,7 @@ type MockPlanner struct{}
 func (MockPlanner) Candidates(context.Context, State) ([]selector.Candidate, error) {
 	return []selector.Candidate{
 		{Action: selector.ActRunTests, LogProb: -0.1, Source: "mock"},
+		{Action: selector.ActRunCmd, LogProb: -1.0, Source: "mock"},
 		{Action: selector.ActParseCode, LogProb: -0.2, Source: "mock"},
 		{Action: selector.ActMutateCode, LogProb: -0.3, Source: "mock"},
 		{Action: selector.ActVerify, LogProb: -0.4, Source: "mock"},

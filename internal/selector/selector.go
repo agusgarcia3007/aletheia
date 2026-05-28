@@ -3,12 +3,15 @@ package selector
 import "fmt"
 
 const (
-	ActRunTests   = "<ACT_RUN_TESTS>"
-	ActParseCode  = "<ACT_PARSE_CODE>"
-	ActMutateCode = "<ACT_MUTATE_CODE>"
-	ActVerify     = "<ACT_VERIFY>"
-	ActRespond    = "<ACT_RESPOND>"
-	ActAbstain    = "<ACT_ABSTAIN>"
+	ActRunTests           = "<ACT_RUN_TESTS>"
+	ActRunCmd             = "<ACT_RUN_CMD>"
+	ActParseCode          = "<ACT_PARSE_CODE>"
+	ActMutateCode         = "<ACT_MUTATE_CODE>"
+	ActFindCounterexample = "<ACT_FIND_COUNTEREXAMPLE>"
+	ActRepair             = "<ACT_REPAIR>"
+	ActVerify             = "<ACT_VERIFY>"
+	ActRespond            = "<ACT_RESPOND>"
+	ActAbstain            = "<ACT_ABSTAIN>"
 )
 
 type Candidate struct {
@@ -91,7 +94,7 @@ func (HeuristicSelector) Select(snapshot Snapshot, candidates []Candidate) Decis
 
 func IsFunctional(action string) bool {
 	switch action {
-	case ActRunTests, ActParseCode, ActMutateCode, ActVerify, ActRespond, ActAbstain:
+	case ActRunTests, ActRunCmd, ActParseCode, ActMutateCode, ActFindCounterexample, ActRepair, ActVerify, ActRespond, ActAbstain:
 		return true
 	default:
 		return false
@@ -180,6 +183,16 @@ func stagePrior(snapshot Snapshot, action string) float64 {
 			return 3
 		}
 		return -5
+	case ActFindCounterexample:
+		if snapshot.LastVerifierStatus == "fail" {
+			return 1
+		}
+		return -4
+	case ActRepair:
+		if snapshot.Parsed && snapshot.PatternFound {
+			return 2
+		}
+		return -5
 	case ActParseCode:
 		if snapshot.HasRunTests && snapshot.LastVerifierStatus == "fail" {
 			return 3
@@ -190,6 +203,8 @@ func stagePrior(snapshot Snapshot, action string) float64 {
 			return 3
 		}
 		return -3
+	case ActRunCmd:
+		return -4
 	default:
 		return -10
 	}

@@ -35,8 +35,49 @@ func TestRunSuccessRejectsUnsupportedCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unsupported command error")
 	}
-	if ev.Status != StatusUnknown || ev.BlockedReason == "" {
+	if ev.Status != StatusUnknown || ev.BlockedReason != "command_allowlist" {
 		t.Fatalf("blocked evidence = %+v", ev)
+	}
+}
+
+func TestAllowlistedCommandShapes(t *testing.T) {
+	allowed := []string{
+		"go test",
+		"go test ./...",
+		"go test -run TestAdd ./...",
+		"go test -bench BenchmarkAdd ./...",
+		"go vet ./...",
+		"rg Add calculator.go",
+		"git diff",
+		"git status",
+		"cat calculator.go",
+		"ls",
+		"ls internal",
+	}
+	for _, command := range allowed {
+		if !IsAllowed(command) {
+			t.Fatalf("command should be allowed: %s", command)
+		}
+	}
+	blocked := []string{
+		"rm -rf .",
+		"curl example.com",
+		"go test -exec sh ./...",
+		"rg --files",
+		"cat ../secret",
+		"ls /tmp",
+		"git checkout main",
+	}
+	for _, command := range blocked {
+		if IsAllowed(command) {
+			t.Fatalf("command should be blocked: %s", command)
+		}
+	}
+	if !IsReadOnlyCommand("git status") {
+		t.Fatal("git status should be read-only")
+	}
+	if IsReadOnlyCommand("go test ./...") {
+		t.Fatal("go test is a verifier command, not read-only")
 	}
 }
 

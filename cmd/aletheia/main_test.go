@@ -114,6 +114,18 @@ memory:
 	}
 }
 
+func TestRunEvalJSON(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "eval", "--suite", "../../evals/bootstrap", "--json"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"verified_success_rate"`) || !strings.Contains(out, `"go_compile"`) {
+		t.Fatalf("json eval output:\n%s", out)
+	}
+}
+
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	old := os.Stdout

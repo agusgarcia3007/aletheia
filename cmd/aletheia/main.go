@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -76,7 +77,7 @@ Usage:
   aletheia memory inspect [--config configs/micro.yaml] [--db %s]
   aletheia memory skills [--config configs/micro.yaml] [--db %s]
   aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
-  aletheia eval --suite evals/bootstrap
+  aletheia eval --suite evals/bootstrap [--json]
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
 }
@@ -655,6 +656,7 @@ func runSolve(args []string) error {
 func runEval(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
 	suitePath := fs.String("suite", "", "evaluation suite path")
+	jsonOutput := fs.Bool("json", false, "print JSON evaluation report")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -666,10 +668,18 @@ func runEval(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
+	}
 	fmt.Printf("eval suite: %s\n", report.Suite.Path)
 	fmt.Printf("status: bootstrap ready\n")
 	for _, c := range report.Cases {
 		fmt.Printf("%s:\n", c.Name)
+		if c.Status != "" {
+			fmt.Printf("  status: %s\n", c.Status)
+		}
 		if c.CandidateGreedyStatus != "" {
 			fmt.Printf("  candidate_greedy: %s\n", c.CandidateGreedyStatus)
 		}
@@ -686,6 +696,13 @@ func runEval(args []string) error {
 		}
 		fmt.Printf("  improvement: %v\n", c.Improved)
 	}
+	fmt.Printf("metrics:\n")
+	fmt.Printf("  verified_success_rate: %.4f\n", report.Metrics.VerifiedSuccessRate)
+	fmt.Printf("  hallucination_rate: %.4f\n", report.Metrics.HallucinationRate)
+	fmt.Printf("  abstention_accuracy: %.4f\n", report.Metrics.AbstentionAccuracy)
+	fmt.Printf("  tool_calls_per_success: %.4f\n", report.Metrics.ToolCallsPerSuccess)
+	fmt.Printf("  seconds_per_success: %.4f\n", report.Metrics.SecondsPerSuccess)
+	fmt.Printf("  memory_hit_rate: %.4f\n", report.Metrics.MemoryHitRate)
 	if !report.Improved() {
 		return fmt.Errorf("eval bootstrap did not show beam improvement")
 	}

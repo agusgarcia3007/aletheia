@@ -76,3 +76,24 @@
 - Validate verifier config against the existing allowlist and keep enabled verifier order deterministic.
 - Declare `fuzz` in config but reject `fuzz.enabled=true` until a local verifier exists.
 - Use `memory.graph_enabled=false` to skip retriever graph writes without changing the SQLite schema.
+
+## Milestone 9
+
+- Centralize local command execution behind one no-shell allowlist used by verifiers and future VM tool actions.
+- Keep `<ACT_RUN_CMD>` constrained to allowlisted verifier/read-only commands; no arbitrary shell or mutating commands.
+- Mark blocked commands as `unknown` evidence with `blocked_reason=command_allowlist`.
+- Add read-only allowlist entries for `rg`, `git diff`, `git status`, `cat`, and `ls`, with repo-relative path checks.
+
+## Milestone 10
+
+- Make bootstrap eval a programmatic suite with explicit pass/fail cases and aggregate metrics.
+- Keep text eval output stable for humans and add `eval --json` for machine-readable learning loops.
+- Measure verified success, abstention, memory hit rate, tool-call cost, and elapsed seconds per success.
+- Evaluate verifiable behavior only: compile detection, Go test repair, doc QA, abstention, memory recall, beam, learned selector, and skill reuse.
+
+## Milestone 11
+
+- Add a deterministic Go repair package before expanding beyond the known calculator example.
+- Introduce `<ACT_FIND_COUNTEREXAMPLE>` and `<ACT_REPAIR>` while keeping `<ACT_MUTATE_CODE>` as a compatibility path.
+- Keep repairs as patch candidates only; files are still written only during `<ACT_VERIFY>`.
+- Start with small text/AST-adjacent rules and reject unknown failures instead of generating broad edits.

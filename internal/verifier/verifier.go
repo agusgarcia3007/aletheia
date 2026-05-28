@@ -293,6 +293,14 @@ func IsAllowed(command string) bool {
 	return ok
 }
 
+func IsReadOnlyCommand(command string) bool {
+	spec, ok := allowedCommand(normalize(command))
+	if !ok {
+		return false
+	}
+	return spec.ReadOnly
+}
+
 func RunSuccess(ctx context.Context, repoPath string, command string, timeout time.Duration) (Evidence, error) {
 	if !IsAllowed(command) {
 		ev := blockedEvidence("command_allowlist", repoPath, command, fmt.Sprintf("unsupported success command %q", command))
@@ -327,7 +335,7 @@ func RunSandboxed(ctx context.Context, repoPath string, command string, timeout 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, spec[0], spec[1:]...)
+	cmd := exec.CommandContext(runCtx, spec.Argv[0], spec.Argv[1:]...)
 	cmd.Dir = repo
 	stdout := &limitedBuffer{limit: outputLimit}
 	stderr := &limitedBuffer{limit: outputLimit}
@@ -413,33 +421,136 @@ func cleanRepoPath(path string) (string, error) {
 	return abs, nil
 }
 
-func allowedCommand(command string) ([]string, bool) {
-	switch command {
-	case GoTestCommand:
-		return []string{"go", "test", "./..."}, true
-	case GoTestRaceCommand:
-		return []string{"go", "test", "-race", "./..."}, true
-	case GoVetCommand:
-		return []string{"go", "vet", "./..."}, true
-	default:
-		return nil, false
+type CommandSpec struct {
+	Argv     []string
+	ReadOnly bool
+}
+
+func allowedCommand(command string) (CommandSpec, bool) {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return CommandSpec{}, false
 	}
+	switch fields[0] {
+	case "go":
+		return allowedGoCommand(fields)
+	case "rg":
+		return allowedRGCommand(fields)
+	case "git":
+		return allowedGitCommand(fields)
+	case "cat":
+		return allowedCatCommand(fields)
+	case "ls":
+		return allowedLSCommand(fields)
+	default:
+		return CommandSpec{}, false
+	}
+}
+
+func allowedGoCommand(fields []string) (CommandSpec, bool) {
+	if len(fields) == 2 && fields[1] == "test" {
+		return CommandSpec{Argv: fields}, true
+	}
+	if len(fields) == 3 {
+		switch {
+		case fields[1] == "test" && fields[2] == "./...":
+			return CommandSpec{Argv: fields}, true
+		case fields[1] == "vet" && fields[2] == "./...":
+			return CommandSpec{Argv: fields}, true
+		}
+	}
+	if len(fields) == 4 && fields[1] == "test" && fields[2] == "-race" && fields[3] == "./..." {
+		return CommandSpec{Argv: fields}, true
+	}
+	if (len(fields) == 4 || len(fields) == 5) && fields[1] == "test" {
+		switch fields[2] {
+		case "-run", "-bench":
+			if !safePattern(fields[3]) {
+				return CommandSpec{}, false
+			}
+			if len(fields) == 5 && fields[4] != "./..." {
+				return CommandSpec{}, false
+			}
+			return CommandSpec{Argv: fields}, true
+		}
+	}
+	return CommandSpec{}, false
+}
+
+func allowedRGCommand(fields []string) (CommandSpec, bool) {
+	if len(fields) < 2 || len(fields) > 3 {
+		return CommandSpec{}, false
+	}
+	if strings.HasPrefix(fields[1], "-") {
+		return CommandSpec{}, false
+	}
+	if len(fields) == 3 && !safeRelativePath(fields[2]) {
+		return CommandSpec{}, false
+	}
+	return CommandSpec{Argv: fields, ReadOnly: true}, true
+}
+
+func allowedGitCommand(fields []string) (CommandSpec, bool) {
+	if len(fields) != 2 {
+		return CommandSpec{}, false
+	}
+	switch fields[1] {
+	case "diff", "status":
+		return CommandSpec{Argv: fields, ReadOnly: true}, true
+	default:
+		return CommandSpec{}, false
+	}
+}
+
+func allowedCatCommand(fields []string) (CommandSpec, bool) {
+	if len(fields) != 2 || !safeRelativePath(fields[1]) {
+		return CommandSpec{}, false
+	}
+	return CommandSpec{Argv: fields, ReadOnly: true}, true
+}
+
+func allowedLSCommand(fields []string) (CommandSpec, bool) {
+	if len(fields) > 2 {
+		return CommandSpec{}, false
+	}
+	if len(fields) == 2 && !safeRelativePath(fields[1]) {
+		return CommandSpec{}, false
+	}
+	return CommandSpec{Argv: fields, ReadOnly: true}, true
+}
+
+func safePattern(pattern string) bool {
+	return pattern != "" && !strings.HasPrefix(pattern, "-") && !strings.ContainsAny(pattern, "\x00\n\r")
+}
+
+func safeRelativePath(path string) bool {
+	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\n\r") {
+		return false
+	}
+	clean := filepath.Clean(path)
+	return clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 func commandName(command string) string {
-	switch normalize(command) {
-	case GoTestCommand:
+	normalized := normalize(command)
+	fields := strings.Fields(normalized)
+	if len(fields) >= 2 && fields[0] == "go" && fields[1] == "test" {
+		if len(fields) >= 3 && fields[2] == "-race" {
+			return GoTestRaceName
+		}
 		return GoTestName
-	case GoTestRaceCommand:
-		return GoTestRaceName
-	case GoVetCommand:
-		return GoVetName
-	default:
-		return "command_allowlist"
 	}
+	if normalized == GoVetCommand {
+		return GoVetName
+	}
+	return "run_cmd"
 }
 
 func blockedEvidence(verifierName string, repoPath string, command string, reason string) Evidence {
+	blockedReason := "command_allowlist"
+	if !strings.Contains(reason, "allowlist") && !strings.Contains(reason, "unsupported success command") {
+		blockedReason = reason
+	}
 	return Evidence{
 		Verifier:      verifierName,
 		Status:        StatusUnknown,
@@ -448,7 +559,7 @@ func blockedEvidence(verifierName string, repoPath string, command string, reaso
 		CWD:           repoPath,
 		Timestamp:     time.Now().UTC(),
 		ErrorSummary:  reason,
-		BlockedReason: reason,
+		BlockedReason: blockedReason,
 		Stderr:        reason,
 	}
 }

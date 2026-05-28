@@ -457,6 +457,74 @@ func TestMutateCreatesCandidateWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestRunCmdRecordsAllowlistedEvidence(t *testing.T) {
+	root, _, repo := writeBuggyTask(t, true)
+	dbPath := filepath.Join(root, "memory.sqlite")
+	store, err := memory.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	episodeID, err := store.CreateEpisode(context.Background(), "run safe command")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := State{
+		Goal:     "Run status",
+		RepoPath: repo,
+		Success:  "ls",
+	}
+	vm := VM{Store: store, EpisodeID: episodeID, VerifierTimeout: 20 * time.Second}
+	if err := vm.Execute(context.Background(), &state, ActionRunCmd); err != nil {
+		t.Fatal(err)
+	}
+	if state.ToolCalls != 1 || state.FinalStatus != "pass" {
+		t.Fatalf("state = %+v", state)
+	}
+	rows, err := store.EvidenceByVerifier(context.Background(), episodeID, "run_cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Status != "pass" || rows[0].Payload == "" {
+		t.Fatalf("run_cmd evidence = %+v", rows)
+	}
+}
+
+func TestFindCounterexampleAndRepairCreateCandidateWithoutWriting(t *testing.T) {
+	root, _, repo := writeBuggyTask(t, true)
+	state := State{
+		Goal:     "Fix tests",
+		RepoPath: repo,
+		Success:  "go test ./...",
+	}
+	vm := VM{VerifierTimeout: 20 * time.Second}
+	if err := vm.Execute(context.Background(), &state, ActionRunTests); err != nil {
+		t.Fatal(err)
+	}
+	if err := vm.Execute(context.Background(), &state, ActionFindCounterexample); err != nil {
+		t.Fatal(err)
+	}
+	if state.Counterexample == nil || state.FinalStatus != "counterexample_found" {
+		t.Fatalf("counterexample state = %+v", state)
+	}
+	if err := vm.Execute(context.Background(), &state, ActionRepair); err != nil {
+		t.Fatal(err)
+	}
+	if state.CandidatePatch == nil || !strings.Contains(state.Diff, "+\treturn a + b") {
+		t.Fatalf("repair candidate missing: %+v", state.CandidatePatch)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "buggy", "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "return a + b") {
+		t.Fatalf("repair wrote before verify:\n%s", got)
+	}
+}
+
 func TestVerifyRollsBackOnFailure(t *testing.T) {
 	_, _, repo := writeBuggyTask(t, false)
 	state := State{

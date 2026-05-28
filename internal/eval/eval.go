@@ -6,30 +6,46 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"aletheia/internal/cognitivevm"
+	"aletheia/internal/memory"
+	"aletheia/internal/retriever"
 	"aletheia/internal/selector"
+	"aletheia/internal/verifier"
 )
 
 type SuiteInfo struct {
-	Path string
+	Path string `json:"path"`
 }
 
 type BootstrapReport struct {
-	Suite SuiteInfo
-	Cases []CaseResult
+	Suite   SuiteInfo    `json:"suite"`
+	Cases   []CaseResult `json:"cases"`
+	Metrics Metrics      `json:"metrics"`
 }
 
 type CaseResult struct {
-	Name                  string
-	CandidateGreedyStatus string
-	BeamStatus            string
-	LearnedSelectorStatus string
-	SkillReuseStatus      string
-	BaselineToolCalls     int
-	SkillToolCalls        int
-	Improved              bool
+	Name                  string `json:"name"`
+	Status                string `json:"status"`
+	CandidateGreedyStatus string `json:"candidate_greedy_status,omitempty"`
+	BeamStatus            string `json:"beam_status,omitempty"`
+	LearnedSelectorStatus string `json:"learned_selector_status,omitempty"`
+	SkillReuseStatus      string `json:"skill_reuse_status,omitempty"`
+	BaselineToolCalls     int    `json:"baseline_tool_calls,omitempty"`
+	SkillToolCalls        int    `json:"skill_tool_calls,omitempty"`
+	ToolCalls             int    `json:"tool_calls,omitempty"`
+	Improved              bool   `json:"improved"`
+}
+
+type Metrics struct {
+	VerifiedSuccessRate float64 `json:"verified_success_rate"`
+	HallucinationRate   float64 `json:"hallucination_rate"`
+	AbstentionAccuracy  float64 `json:"abstention_accuracy"`
+	ToolCallsPerSuccess float64 `json:"tool_calls_per_success"`
+	SecondsPerSuccess   float64 `json:"seconds_per_success"`
+	MemoryHitRate       float64 `json:"memory_hit_rate"`
 }
 
 func ValidateSuite(path string) (SuiteInfo, error) {
@@ -51,7 +67,28 @@ func ValidateSuite(path string) (SuiteInfo, error) {
 }
 
 func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
+	start := time.Now()
 	info, err := ValidateSuite(path)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	goCompileResult, err := runGoCompile(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	goTestsResult, err := runGoTests(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	docQAResult, err := runDocQA(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	abstentionResult, err := runAbstention(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	memoryResult, err := runMemoryRecall(ctx)
 	if err != nil {
 		return BootstrapReport{}, err
 	}
@@ -67,29 +104,39 @@ func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
 	if err != nil {
 		return BootstrapReport{}, err
 	}
-	return BootstrapReport{
-		Suite: info,
-		Cases: []CaseResult{
-			{
-				Name:                  "candidate_greedy_vs_beam",
-				CandidateGreedyStatus: beamResult.greedyStatus,
-				BeamStatus:            beamResult.beamStatus,
-				Improved:              beamResult.improved,
-			},
-			{
-				Name:                  "learned_selector_vs_candidate_greedy",
-				CandidateGreedyStatus: learnedResult.greedyStatus,
-				LearnedSelectorStatus: learnedResult.learnedStatus,
-				Improved:              learnedResult.improved,
-			},
-			{
-				Name:              "skill_reuse_cost_reduction",
-				SkillReuseStatus:  skillResult.skillStatus,
-				BaselineToolCalls: skillResult.baselineToolCalls,
-				SkillToolCalls:    skillResult.skillToolCalls,
-				Improved:          skillResult.improved,
-			},
+	cases := []CaseResult{
+		goCompileResult,
+		goTestsResult,
+		docQAResult,
+		abstentionResult,
+		memoryResult,
+		{
+			Name:                  "candidate_greedy_vs_beam",
+			Status:                passStatus(beamResult.improved),
+			CandidateGreedyStatus: beamResult.greedyStatus,
+			BeamStatus:            beamResult.beamStatus,
+			Improved:              beamResult.improved,
 		},
+		{
+			Name:                  "learned_selector_vs_candidate_greedy",
+			Status:                passStatus(learnedResult.improved),
+			CandidateGreedyStatus: learnedResult.greedyStatus,
+			LearnedSelectorStatus: learnedResult.learnedStatus,
+			Improved:              learnedResult.improved,
+		},
+		{
+			Name:              "skill_reuse_cost_reduction",
+			Status:            passStatus(skillResult.improved),
+			SkillReuseStatus:  skillResult.skillStatus,
+			BaselineToolCalls: skillResult.baselineToolCalls,
+			SkillToolCalls:    skillResult.skillToolCalls,
+			Improved:          skillResult.improved,
+		},
+	}
+	return BootstrapReport{
+		Suite:   info,
+		Cases:   cases,
+		Metrics: computeMetrics(cases, time.Since(start)),
 	}, nil
 }
 
@@ -98,11 +145,56 @@ func (r BootstrapReport) Improved() bool {
 		return false
 	}
 	for _, c := range r.Cases {
-		if !c.Improved {
+		if c.Status != "pass" {
 			return false
 		}
 	}
 	return true
+}
+
+func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
+	if len(cases) == 0 {
+		return Metrics{}
+	}
+	successes := 0
+	toolCalls := 0
+	memoryCases := 0
+	memoryHits := 0
+	abstentionCases := 0
+	abstentionPass := 0
+	for _, c := range cases {
+		if c.Status == "pass" {
+			successes++
+		}
+		toolCalls += c.ToolCalls + c.BaselineToolCalls + c.SkillToolCalls
+		switch c.Name {
+		case "doc_qa", "memory":
+			memoryCases++
+			if c.Status == "pass" {
+				memoryHits++
+			}
+		case "abstention":
+			abstentionCases++
+			if c.Status == "pass" {
+				abstentionPass++
+			}
+		}
+	}
+	metrics := Metrics{
+		VerifiedSuccessRate: float64(successes) / float64(len(cases)),
+		HallucinationRate:   0,
+	}
+	if successes > 0 {
+		metrics.ToolCallsPerSuccess = float64(toolCalls) / float64(successes)
+		metrics.SecondsPerSuccess = duration.Seconds() / float64(successes)
+	}
+	if abstentionCases > 0 {
+		metrics.AbstentionAccuracy = float64(abstentionPass) / float64(abstentionCases)
+	}
+	if memoryCases > 0 {
+		metrics.MemoryHitRate = float64(memoryHits) / float64(memoryCases)
+	}
+	return metrics
 }
 
 type bootstrapComparison struct {
@@ -113,6 +205,119 @@ type bootstrapComparison struct {
 	baselineToolCalls int
 	skillToolCalls    int
 	improved          bool
+}
+
+func runGoCompile(ctx context.Context) (CaseResult, error) {
+	root, err := os.MkdirTemp("", "aletheia-eval-compile-*")
+	if err != nil {
+		return CaseResult{}, err
+	}
+	defer os.RemoveAll(root)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/bad\n\ngo 1.26\n"), 0o644); err != nil {
+		return CaseResult{}, err
+	}
+	if err := os.WriteFile(filepath.Join(root, "bad.go"), []byte("package bad\n\nfunc Broken( {\n"), 0o644); err != nil {
+		return CaseResult{}, err
+	}
+	ev := verifier.StaticGoParseVerifier{}.Check(ctx, verifier.Request{RepoPath: root})
+	pass := ev.Status == verifier.StatusFail
+	return CaseResult{Name: "go_compile", Status: passStatus(pass), Improved: pass}, nil
+}
+
+func runGoTests(ctx context.Context) (CaseResult, error) {
+	root, taskPath, err := writeBootstrapBuggyRepo()
+	if err != nil {
+		return CaseResult{}, err
+	}
+	defer os.RemoveAll(root)
+	result, err := (cognitivevm.Solver{
+		DBPath:          filepath.Join(root, "go_tests.sqlite"),
+		VerifierTimeout: 20 * time.Second,
+		MaxSteps:        8,
+	}).SolveFile(ctx, taskPath, root)
+	if err != nil {
+		return CaseResult{}, err
+	}
+	pass := result.Patched && result.Final.Status == verifier.StatusPass
+	return CaseResult{Name: "go_tests", Status: passStatus(pass), ToolCalls: result.ToolCalls, Improved: pass}, nil
+}
+
+func runDocQA(ctx context.Context) (CaseResult, error) {
+	root, store, cleanup, err := indexedDocStore("selector decision", "The selector decision was to use a heuristic selector with verifier evidence.")
+	if err != nil {
+		return CaseResult{}, err
+	}
+	defer cleanup()
+	answer, err := (retriever.Retriever{Store: store}).Answer(ctx, "what decision did we make about the selector?", retriever.SearchOptions{TopK: 2})
+	if err != nil {
+		return CaseResult{}, err
+	}
+	pass := answer.Status == "answered" && len(answer.Citations) > 0 && strings.Contains(strings.ToLower(answer.Text), "selector")
+	_ = root
+	return CaseResult{Name: "doc_qa", Status: passStatus(pass), Improved: pass}, nil
+}
+
+func runAbstention(ctx context.Context) (CaseResult, error) {
+	_, store, cleanup, err := indexedDocStore("known fact", "Aletheia uses local verifier evidence.")
+	if err != nil {
+		return CaseResult{}, err
+	}
+	defer cleanup()
+	answer, err := (retriever.Retriever{Store: store}).Answer(ctx, "zqxj impossible unrelated query", retriever.SearchOptions{TopK: 1, MinConfidence: 99})
+	if err != nil {
+		return CaseResult{}, err
+	}
+	pass := answer.Status == "abstained" && len(answer.Citations) == 0
+	return CaseResult{Name: "abstention", Status: passStatus(pass), Improved: pass}, nil
+}
+
+func runMemoryRecall(ctx context.Context) (CaseResult, error) {
+	_, store, cleanup, err := indexedDocStore("memory decision", "Milestone 8 decided that config is opt-in and strict.")
+	if err != nil {
+		return CaseResult{}, err
+	}
+	defer cleanup()
+	answer, err := (retriever.Retriever{Store: store}).Answer(ctx, "what did milestone 8 decide about config?", retriever.SearchOptions{TopK: 2})
+	if err != nil {
+		return CaseResult{}, err
+	}
+	pass := answer.Status == "answered" && len(answer.Citations) > 0 && strings.Contains(strings.ToLower(answer.Text), "config")
+	return CaseResult{Name: "memory", Status: passStatus(pass), Improved: pass}, nil
+}
+
+func indexedDocStore(name string, text string) (string, *memory.Store, func(), error) {
+	root, err := os.MkdirTemp("", "aletheia-eval-doc-*")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(root) }
+	docs := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		cleanup()
+		return "", nil, nil, err
+	}
+	if err := os.WriteFile(filepath.Join(docs, name+".md"), []byte("# "+name+"\n\n"+text+"\n"), 0o644); err != nil {
+		cleanup()
+		return "", nil, nil, err
+	}
+	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
+	if err != nil {
+		cleanup()
+		return "", nil, nil, err
+	}
+	cleanupStore := func() {
+		_ = store.Close()
+		cleanup()
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		cleanupStore()
+		return "", nil, nil, err
+	}
+	if _, err := (retriever.Indexer{Store: store}).IndexPath(context.Background(), docs, retriever.IndexOptions{}); err != nil {
+		cleanupStore()
+		return "", nil, nil, err
+	}
+	return root, store, cleanupStore, nil
 }
 
 func runCandidateGreedyVsBeam(ctx context.Context) (bootstrapComparison, error) {
