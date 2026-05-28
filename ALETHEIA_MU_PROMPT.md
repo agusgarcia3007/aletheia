@@ -753,7 +753,12 @@ Formato:
   "goal": "fix failing test",
   "context": "...",
   "valid_actions": ["<ACT_RUN_TESTS>", "<ACT_MUTATE_CODE>"],
-  "gold_action_sequence": ["<ACT_RUN_TESTS>", "<ACT_PARSE_CODE>", "<ACT_MUTATE_CODE>", "<ACT_VERIFY>"],
+  "gold_action_sequence": [
+    "<ACT_RUN_TESTS>",
+    "<ACT_PARSE_CODE>",
+    "<ACT_MUTATE_CODE>",
+    "<ACT_VERIFY>"
+  ],
   "expected_result": "tests pass"
 }
 ```
@@ -1048,7 +1053,7 @@ Deliverable:
 
 ---
 
-## 9. Diseño del archivo de configuración
+## Semana 9. Diseño del archivo de configuración
 
 Ejemplo `configs/micro.yaml`:
 

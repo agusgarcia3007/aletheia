@@ -57,6 +57,27 @@ func TestChunkOffsetsOverlap(t *testing.T) {
 	}
 }
 
+func TestIndexerCanDisableGraphWrites(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "docs", "decisions.md"), "# Decisions\n\nGraph can be disabled for config smoke tests.\n")
+	store := openStore(t)
+	graphEnabled := false
+	if _, err := (Indexer{Store: store}).IndexPath(ctx, root, IndexOptions{GraphEnabled: &graphEnabled}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := store.Inspect(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Documents != 1 || stats.Chunks == 0 {
+		t.Fatalf("documents/chunks not indexed: %+v", stats)
+	}
+	if stats.Nodes != 0 || stats.Edges != 0 {
+		t.Fatalf("graph should be disabled: %+v", stats)
+	}
+}
+
 func TestRetrieverSearchAndAnswer(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

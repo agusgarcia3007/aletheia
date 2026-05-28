@@ -67,3 +67,12 @@
 - On failed skill reuse, restore touched files, set the skill success rate to `0`, and fall back to the normal solver path.
 - Report skill reuse explicitly in CLI output with `skill: <name>`, `initial verifier: skipped`, and `tool_calls`.
 - Extend bootstrap eval with `skill_reuse_cost_reduction` so the learned skill must pass with fewer verifier tool calls than the baseline solve.
+
+## Milestone 8
+
+- Treat `configs/*.yaml` as a strict typed contract for runtime defaults.
+- Keep config opt-in through `--config`; without it, existing CLI defaults remain unchanged.
+- Let explicit CLI flags override all config-derived defaults.
+- Validate verifier config against the existing allowlist and keep enabled verifier order deterministic.
+- Declare `fuzz` in config but reject `fuzz.enabled=true` until a local verifier exists.
+- Use `memory.graph_enabled=false` to skip retriever graph writes without changing the SQLite schema.

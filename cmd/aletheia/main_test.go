@@ -1,0 +1,221 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"aletheia/internal/memory"
+)
+
+func TestRunConfigInspect(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeCLIConfig(t, root, "greedy", true)
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "config", "inspect", "--config", configPath})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "project:") || !strings.Contains(out, "search: strategy=greedy") || !strings.Contains(out, "verifiers: static_go_parse,go_test") {
+		t.Fatalf("config inspect output:\n%s", out)
+	}
+}
+
+func TestRunInitUsesConfigDB(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeCLIConfig(t, root, "greedy", false)
+	if _, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "init", "--config", configPath})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "memory.sqlite")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunSolveUsesConfigAndFlagOverrides(t *testing.T) {
+	root := t.TempDir()
+	taskPath, repo := writeCLIBuggyTask(t, root)
+	configPath := writeCLIConfig(t, root, "beam", true)
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "solve", "--config", configPath, "--task", taskPath, "--trace"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "source=beam") || !strings.Contains(out, "verifiers=static_go_parse,go_test") {
+		t.Fatalf("solve did not use config defaults:\n%s", out)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "calculator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "return a + b") {
+		t.Fatalf("repo not patched:\n%s", got)
+	}
+
+	overrideRoot := t.TempDir()
+	overrideTaskPath, _ := writeCLIBuggyTask(t, overrideRoot)
+	overrideConfigPath := writeCLIConfig(t, overrideRoot, "beam", true)
+	overrideOut, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "solve", "--config", overrideConfigPath, "--task", overrideTaskPath, "--search", "greedy", "--verifier", "go_test", "--trace"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(overrideOut, "source=mock") || strings.Contains(overrideOut, "source=beam") || !strings.Contains(overrideOut, "verifiers=go_test") {
+		t.Fatalf("explicit flags did not override config:\n%s", overrideOut)
+	}
+}
+
+func TestRunIndexUsesConfigMemoryDefaults(t *testing.T) {
+	root := t.TempDir()
+	docs := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCLIFile(t, filepath.Join(docs, "note.md"), "# Note\n\nConfig can disable graph writes.\n")
+	configPath := filepath.Join(root, "config.yaml")
+	writeCLIFile(t, configPath, `project:
+  memory_db: "`+filepath.Join(root, "memory.sqlite")+`"
+model:
+  vocab_size: 512
+memory:
+  chunk_size: 24
+  chunk_overlap: 4
+  embedding: hashing
+  graph_enabled: false
+`)
+	if _, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "index", docs, "--config", configPath})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := store.Inspect(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Documents != 1 || stats.Chunks == 0 || stats.Nodes != 0 || stats.Edges != 0 {
+		t.Fatalf("index stats = %+v", stats)
+	}
+}
+
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	runErr := fn()
+	closeErr := w.Close()
+	os.Stdout = old
+	out, readErr := io.ReadAll(r)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	return string(out), runErr
+}
+
+func writeCLIConfig(t *testing.T, root string, strategy string, static bool) string {
+	t.Helper()
+	path := filepath.Join(root, "config.yaml")
+	staticEnabled := "false"
+	if static {
+		staticEnabled = "true"
+	}
+	text := `project:
+  name: test
+  data_dir: "` + filepath.Join(root, "data") + `"
+  checkpoint_dir: "` + filepath.Join(root, "checkpoints") + `"
+  memory_db: "` + filepath.Join(root, "memory.sqlite") + `"
+model:
+  vocab_size: 512
+search:
+  strategy: ` + strategy + `
+  beam_width: 4
+  max_depth: 8
+verifiers:
+  static_go_parse:
+    enabled: ` + staticEnabled + `
+  go_test:
+    enabled: true
+    command: "go test ./..."
+    timeout_seconds: 20
+memory:
+  chunk_size: 800
+  chunk_overlap: 80
+  embedding: hashing
+  graph_enabled: true
+`
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeCLIBuggyTask(t *testing.T, root string) (string, string) {
+	t.Helper()
+	repo := filepath.Join(root, "buggy")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCLIFile(t, filepath.Join(repo, "go.mod"), "module example.com/buggy\n\ngo 1.26\n")
+	writeCLIFile(t, filepath.Join(repo, "calculator.go"), `package calculator
+
+func Add(a, b int) int {
+	return a - b
+}
+`)
+	writeCLIFile(t, filepath.Join(repo, "calculator_test.go"), `package calculator
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+	if got := Add(2, 3); got != 5 {
+		t.Fatalf("Add(2, 3) = %d", got)
+	}
+}
+`)
+	task := struct {
+		Goal    string `json:"goal"`
+		Repo    string `json:"repo"`
+		Success string `json:"success"`
+	}{
+		Goal:    "Fix the Go project so all tests pass.",
+		Repo:    repo,
+		Success: "go test ./...",
+	}
+	raw, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskPath := filepath.Join(root, "task.json")
+	writeCLIFile(t, taskPath, string(raw))
+	return taskPath, repo
+}
+
+func writeCLIFile(t *testing.T, path string, text string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

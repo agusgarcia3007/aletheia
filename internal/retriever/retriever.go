@@ -33,6 +33,7 @@ type IndexOptions struct {
 	ChunkSize    int
 	ChunkOverlap int
 	MaxFileBytes int64
+	GraphEnabled *bool
 }
 
 type IndexReport struct {
@@ -150,8 +151,10 @@ func (i Indexer) IndexPath(ctx context.Context, root string, opts IndexOptions) 
 		if err != nil {
 			return err
 		}
-		if err := i.writeGraph(ctx, doc, stored); err != nil {
-			return err
+		if opts.graphEnabled() {
+			if err := i.writeGraph(ctx, doc, stored); err != nil {
+				return err
+			}
 		}
 		report.Indexed++
 		report.ChunksWritten += len(stored)
@@ -294,6 +297,10 @@ func normalizeIndexOptions(opts IndexOptions) IndexOptions {
 		opts.MaxFileBytes = DefaultMaxFileBytes
 	}
 	return opts
+}
+
+func (opts IndexOptions) graphEnabled() bool {
+	return opts.GraphEnabled == nil || *opts.GraphEnabled
 }
 
 func chunkText(text string, size int, overlap int) []memory.Chunk {

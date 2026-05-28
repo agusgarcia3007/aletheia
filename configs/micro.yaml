@@ -44,10 +44,17 @@ verifiers:
     enabled: true
     command: "go test ./..."
     timeout_seconds: 60
+  go_vet:
+    enabled: true
+    command: "go vet ./..."
+    timeout_seconds: 60
+  fuzz:
+    enabled: false
+    timeout_seconds: 120
 
 memory:
   chunk_size: 1200
   chunk_overlap: 200
+  max_file_bytes: 524288
   embedding: hashing
   graph_enabled: true
-

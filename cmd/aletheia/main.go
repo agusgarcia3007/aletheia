@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aletheia/internal/cognitivevm"
+	"aletheia/internal/config"
 	"aletheia/internal/eval"
 	"aletheia/internal/memory"
 	"aletheia/internal/model"
@@ -34,6 +35,8 @@ func run(args []string) error {
 	}
 
 	switch args[1] {
+	case "config":
+		return runConfig(args[2:])
 	case "init":
 		return runInit(args[2:])
 	case "train":
@@ -63,25 +66,89 @@ func usage() error {
 	fmt.Fprintf(os.Stderr, `aletheia is a local verifier-first cognitive architecture.
 
 Usage:
-  aletheia init [--db %s]
+  aletheia init [--config configs/micro.yaml] [--db %s]
+  aletheia config inspect --config configs/micro.yaml
   aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
   aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
   aletheia run --checkpoint checkpoints/tiny-actions --prompt "<USER>fix failing go test<ASSISTANT>"
-  aletheia index ./docs [--db %s]
-  aletheia ask --query "qué decisión tomamos sobre el selector?" [--db %s]
-  aletheia memory inspect [--db %s]
-  aletheia memory skills [--db %s]
-  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
+  aletheia index ./docs [--config configs/micro.yaml] [--db %s]
+  aletheia ask --query "qué decisión tomamos sobre el selector?" [--config configs/micro.yaml] [--db %s]
+  aletheia memory inspect [--config configs/micro.yaml] [--db %s]
+  aletheia memory skills [--config configs/micro.yaml] [--db %s]
+  aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
 }
 
+func runConfig(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("config requires a subcommand")
+	}
+	switch args[0] {
+	case "inspect":
+		return runConfigInspect(args[1:])
+	default:
+		return fmt.Errorf("unknown config subcommand %q", args[0])
+	}
+}
+
+func runConfigInspect(args []string) error {
+	fs := flag.NewFlagSet("config inspect", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *configPath == "" {
+		return fmt.Errorf("--config is required")
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("config: %s\n", *configPath)
+	fmt.Printf("project: name=%s data_dir=%s checkpoint_dir=%s memory_db=%s\n", cfg.Project.Name, cfg.Project.DataDir, cfg.Project.CheckpointDir, cfg.Project.MemoryDB)
+	fmt.Printf("model: name=%s vocab_size=%d context_length=%d layers=%d heads=%d d_model=%d d_ff=%d\n", cfg.Model.Name, cfg.Model.VocabSize, cfg.Model.ContextLength, cfg.Model.NLayers, cfg.Model.NHeads, cfg.Model.DModel, cfg.Model.DFF)
+	fmt.Printf("search: strategy=%s beam_width=%d max_depth=%d budget_seconds=%d budget_tool_calls=%d\n", cfg.Search.Strategy, cfg.Search.BeamWidth, cfg.Search.MaxDepth, cfg.Search.BudgetSeconds, cfg.Search.BudgetToolCalls)
+	fmt.Printf("verifiers: %s timeout=%s\n", strings.Join(cfg.EnabledVerifierNames(), ","), cfg.EffectiveVerifierTimeout())
+	fmt.Printf("memory: chunk_size=%d chunk_overlap=%d max_file_bytes=%d embedding=%s graph_enabled=%v\n", cfg.Memory.ChunkSize, cfg.Memory.ChunkOverlap, cfg.Memory.MaxFileBytes, cfg.Memory.Embedding, cfg.Memory.GraphEnabledBool())
+	return nil
+}
+
+func loadConfig(path string) (*config.Config, error) {
+	if path == "" {
+		return nil, nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	seen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			seen = true
+		}
+	})
+	return seen
+}
+
 func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
 	}
 
 	store, err := memory.Open(*dbPath)
@@ -162,12 +229,28 @@ func runTrainSelector(args []string) error {
 
 func runModel(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
 	checkpoint := fs.String("checkpoint", "checkpoints/tiny-actions", "checkpoint directory")
 	prompt := fs.String("prompt", "", "prompt text")
 	maxTokens := fs.Int("max-tokens", 32, "maximum generated tokens")
 	topK := fs.Int("top-k", 8, "top-k candidates to print from the first step")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil {
+		if !flagWasSet(fs, "checkpoint") {
+			*checkpoint = filepath.Join(cfg.Project.CheckpointDir, cfg.Model.Name)
+		}
+		if !flagWasSet(fs, "max-tokens") {
+			*maxTokens = cfg.Inference.MaxTokens
+		}
+		if !flagWasSet(fs, "top-k") {
+			*topK = cfg.Inference.TopK
+		}
 	}
 	if *prompt == "" {
 		return fmt.Errorf("--prompt is required")
@@ -213,6 +296,7 @@ func runModel(args []string) error {
 
 func runIndex(args []string) error {
 	fs := flag.NewFlagSet("index", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	chunkSize := fs.Int("chunk-size", retriever.DefaultChunkSize, "chunk size in runes")
 	chunkOverlap := fs.Int("chunk-overlap", retriever.DefaultChunkOverlap, "chunk overlap in runes")
@@ -223,6 +307,26 @@ func runIndex(args []string) error {
 	}
 	if err := fs.Parse(flagArgs); err != nil {
 		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	graphEnabled := true
+	if cfg != nil {
+		if !flagWasSet(fs, "db") {
+			*dbPath = cfg.Project.MemoryDB
+		}
+		if !flagWasSet(fs, "chunk-size") {
+			*chunkSize = cfg.Memory.ChunkSize
+		}
+		if !flagWasSet(fs, "chunk-overlap") {
+			*chunkOverlap = cfg.Memory.ChunkOverlap
+		}
+		if !flagWasSet(fs, "max-file-bytes") {
+			*maxFileBytes = cfg.Memory.MaxFileBytes
+		}
+		graphEnabled = cfg.Memory.GraphEnabledBool()
 	}
 	if path == "" {
 		return fmt.Errorf("index requires exactly one path")
@@ -239,6 +343,7 @@ func runIndex(args []string) error {
 		ChunkSize:    *chunkSize,
 		ChunkOverlap: *chunkOverlap,
 		MaxFileBytes: *maxFileBytes,
+		GraphEnabled: &graphEnabled,
 	})
 	if err != nil {
 		return err
@@ -265,7 +370,7 @@ func splitIndexArgs(args []string) (string, []string, error) {
 				continue
 			}
 			switch arg {
-			case "--db", "-db", "--chunk-size", "-chunk-size", "--chunk-overlap", "-chunk-overlap", "--max-file-bytes", "-max-file-bytes":
+			case "--config", "-config", "--db", "-db", "--chunk-size", "-chunk-size", "--chunk-overlap", "-chunk-overlap", "--max-file-bytes", "-max-file-bytes":
 				if i+1 >= len(args) {
 					return "", nil, fmt.Errorf("%s requires a value", arg)
 				}
@@ -284,12 +389,20 @@ func splitIndexArgs(args []string) (string, []string, error) {
 
 func runAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	query := fs.String("query", "", "question to answer from indexed local memory")
 	topK := fs.Int("top-k", 5, "number of evidence chunks")
 	minConfidence := fs.Float64("min-confidence", retriever.DefaultMinConfidence, "minimum confidence threshold")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
 	}
 	if strings.TrimSpace(*query) == "" {
 		return fmt.Errorf("--query is required")
@@ -338,10 +451,18 @@ func runMemory(args []string) error {
 
 func runMemoryInspect(args []string) error {
 	fs := flag.NewFlagSet("memory inspect", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	latest := fs.Int("latest", 5, "latest indexed paths to show")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
 	}
 	store, err := memory.Open(*dbPath)
 	if err != nil {
@@ -371,9 +492,17 @@ func runMemoryInspect(args []string) error {
 
 func runMemorySkills(args []string) error {
 	fs := flag.NewFlagSet("memory skills", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
 	}
 	store, err := memory.Open(*dbPath)
 	if err != nil {
@@ -396,6 +525,7 @@ func runMemorySkills(args []string) error {
 
 func runSolve(args []string) error {
 	fs := flag.NewFlagSet("solve", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
 	taskPath := fs.String("task", "", "task JSON path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	timeout := fs.Duration("timeout", 60*time.Second, "verifier timeout")
@@ -413,6 +543,27 @@ func runSolve(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil {
+		if !flagWasSet(fs, "db") {
+			*dbPath = cfg.Project.MemoryDB
+		}
+		if !flagWasSet(fs, "timeout") {
+			*timeout = cfg.EffectiveVerifierTimeout()
+		}
+		if !flagWasSet(fs, "search") {
+			*searchStrategy = cfg.Search.Strategy
+		}
+		if !flagWasSet(fs, "beam-width") {
+			*beamWidth = cfg.Search.BeamWidth
+		}
+		if !flagWasSet(fs, "max-depth") {
+			*maxDepth = cfg.Search.MaxDepth
+		}
+	}
 	if *taskPath == "" {
 		return fmt.Errorf("--task is required")
 	}
@@ -421,7 +572,11 @@ func runSolve(args []string) error {
 	if err != nil {
 		return err
 	}
-	verifierNames, err := verifier.ParseNames(*verifierNamesCSV, *includeVet, *includeRace)
+	verifierCSV := *verifierNamesCSV
+	if cfg != nil && !flagWasSet(fs, "verifier") {
+		verifierCSV = strings.Join(cfg.EnabledVerifierNames(), ",")
+	}
+	verifierNames, err := verifier.ParseNames(verifierCSV, *includeVet, *includeRace)
 	if err != nil {
 		return err
 	}
