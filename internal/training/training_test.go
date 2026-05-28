@@ -36,7 +36,7 @@ func TestLoadDatasetAndRejectOverContext(t *testing.T) {
 
 func TestLoadChatBasicDataset(t *testing.T) {
 	tok := tokenizer.New()
-	path := "../../datasets/chat_basic.jsonl"
+	path := "../../datasets/aletheia_mikros.jsonl"
 	samples, err := LoadDataset(path, tok, 256)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestLoadChatBasicDataset(t *testing.T) {
 	if strings.Contains(string(raw), "<ACT_") {
 		t.Fatal("chat dataset should not train action tokens")
 	}
-	if !strings.Contains(string(raw), "aletheia-chat-basic") {
+	if !strings.Contains(string(raw), "aletheia-mikros") {
 		t.Fatal("chat dataset should document the public chat model slug")
 	}
 }
@@ -131,7 +131,7 @@ func TestTrainBasicChatSubsetAndGenerate(t *testing.T) {
   name: test
   checkpoint_dir: `+dir+`
 model:
-  name: aletheia-chat-basic-test
+  name: aletheia-mikros-test
   vocab_size: 512
   context_length: 64
   n_layers: 1
@@ -170,7 +170,7 @@ inference:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Config.Name != "aletheia-chat-basic-test" {
+	if manifest.Config.Name != "aletheia-mikros-test" {
 		t.Fatalf("model name = %q", manifest.Config.Name)
 	}
 	r := runner.New(m, tok)

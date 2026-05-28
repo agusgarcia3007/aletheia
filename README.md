@@ -6,8 +6,7 @@ Core commands:
 
 ```bash
 go run ./cmd/aletheia init --db data/memory.sqlite
-go run ./cmd/aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
-go run ./cmd/aletheia train --config configs/chat-basic.yaml --dataset datasets/chat_basic.jsonl --out checkpoints/aletheia-chat-basic
+go run ./cmd/aletheia train --config configs/aletheia-mikros.yaml --dataset datasets/aletheia_mikros.jsonl --out checkpoints/aletheia-mikros
 go run ./cmd/aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
 go run ./cmd/aletheia solve --task examples/buggy-go/task.json --trace
 go run ./cmd/aletheia eval --suite evals/bootstrap --json
@@ -35,8 +34,8 @@ OpenAI-compatible local API:
 
 ```bash
 ALETHEIA_API_KEY=local-dev go run ./cmd/aletheia serve \
-  --checkpoint checkpoints/aletheia-chat-basic \
-  --model aletheia-chat-basic \
+  --checkpoint checkpoints/aletheia-mikros \
+  --model aletheia-mikros \
   --addr :8080
 ```
 
@@ -47,7 +46,7 @@ from openai import OpenAI
 
 client = OpenAI(api_key="local-dev", base_url="http://localhost:8080/v1")
 response = client.chat.completions.create(
-    model="aletheia-chat-basic",
+    model="aletheia-mikros",
     messages=[{"role": "user", "content": "hola como estas?"}],
     max_tokens=64,
 )
@@ -65,13 +64,13 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: "aletheia-chat-basic",
+  model: "aletheia-mikros",
   messages: [{ role: "user", content: "hola como estas?" }],
   max_tokens: 64,
 });
 console.log(response.choices[0].message.content);
 ```
 
-Use `aletheia-chat-basic` for the public chat API. The `tiny-actions` checkpoint remains the action planner for internal `solve` workflows and can still be served explicitly if you want to inspect action-token inference.
+`aletheia-mikros` is the first public checkpoint: a small local model for basic conversation and Aletheia command help. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
 
 See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.

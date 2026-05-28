@@ -17,7 +17,7 @@ import (
 
 const (
 	DefaultAddr         = ":8080"
-	DefaultCheckpoint   = "checkpoints/aletheia-chat-basic"
+	DefaultCheckpoint   = "checkpoints/aletheia-mikros"
 	DefaultMaxBodyBytes = int64(1 << 20)
 )
 

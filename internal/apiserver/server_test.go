@@ -42,14 +42,14 @@ func TestModelsRequiresBearerAuth(t *testing.T) {
 	if withAuth.Code != http.StatusOK {
 		t.Fatalf("auth status = %d body=%s", withAuth.Code, withAuth.Body.String())
 	}
-	if !strings.Contains(withAuth.Body.String(), `"id":"tiny-actions"`) {
+	if !strings.Contains(withAuth.Body.String(), `"id":"aletheia-mikros"`) {
 		t.Fatalf("body = %s", withAuth.Body.String())
 	}
 }
 
 func TestChatCompletionsReturnsOpenAIShape(t *testing.T) {
 	server := newTestServer(t, Options{APIKey: "secret"})
-	body := `{"model":"tiny-actions","messages":[{"role":"user","content":"fix failing go test"}],"max_tokens":8}`
+	body := `{"model":"aletheia-mikros","messages":[{"role":"user","content":"hola como estas?"}],"max_tokens":8}`
 	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -68,7 +68,7 @@ func TestChatCompletionsReturnsOpenAIShape(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Object != "chat.completion" || response.Model != "tiny-actions" {
+	if response.Object != "chat.completion" || response.Model != "aletheia-mikros" {
 		t.Fatalf("response = %+v", response)
 	}
 	if len(response.Choices) != 1 || response.Choices[0].Message.Role != "assistant" || response.Choices[0].Message.Content == "" {
@@ -81,7 +81,7 @@ func TestChatCompletionsReturnsOpenAIShape(t *testing.T) {
 
 func TestChatCompletionsRejectsStreamAndWrongModel(t *testing.T) {
 	server := newTestServer(t, Options{APIKey: "secret"})
-	stream := serveJSON(t, server, "/v1/chat/completions", `{"model":"tiny-actions","messages":[{"role":"user","content":"x"}],"stream":true}`, "secret")
+	stream := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"x"}],"stream":true}`, "secret")
 	if stream.Code != http.StatusBadRequest || !strings.Contains(stream.Body.String(), "unsupported_parameter") {
 		t.Fatalf("stream status = %d body=%s", stream.Code, stream.Body.String())
 	}
@@ -93,21 +93,21 @@ func TestChatCompletionsRejectsStreamAndWrongModel(t *testing.T) {
 
 func TestCompletionsAndBodyLimit(t *testing.T) {
 	server := newTestServer(t, Options{APIKey: "secret"})
-	completion := serveJSON(t, server, "/v1/completions", `{"model":"tiny-actions","prompt":"<USER>x<ASSISTANT>","max_tokens":4}`, "secret")
+	completion := serveJSON(t, server, "/v1/completions", `{"model":"aletheia-mikros","prompt":"<USER>x<ASSISTANT>","max_tokens":4}`, "secret")
 	if completion.Code != http.StatusOK || !strings.Contains(completion.Body.String(), `"object":"text_completion"`) {
 		t.Fatalf("completion status = %d body=%s", completion.Code, completion.Body.String())
 	}
 
 	limited := newTestServer(t, Options{APIKey: "secret", MaxBodyBytes: 12})
-	tooLarge := serveJSON(t, limited, "/v1/chat/completions", `{"model":"tiny-actions","messages":[{"role":"user","content":"x"}]}`, "secret")
+	tooLarge := serveJSON(t, limited, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"x"}]}`, "secret")
 	if tooLarge.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("too large status = %d body=%s", tooLarge.Code, tooLarge.Body.String())
 	}
 }
 
-func TestChatBasicCheckpointDoesNotEmitActionTokensForGreeting(t *testing.T) {
-	server := newNamedTestServer(t, "aletheia-chat-basic", Options{APIKey: "secret"})
-	body := `{"model":"aletheia-chat-basic","messages":[{"role":"user","content":"hola como estas?"}],"max_tokens":16}`
+func TestMikrosCheckpointDoesNotEmitActionTokensForGreeting(t *testing.T) {
+	server := newNamedTestServer(t, "aletheia-mikros", Options{APIKey: "secret"})
+	body := `{"model":"aletheia-mikros","messages":[{"role":"user","content":"hola como estas?"}],"max_tokens":16}`
 	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -133,7 +133,7 @@ func TestChatBasicCheckpointDoesNotEmitActionTokensForGreeting(t *testing.T) {
 
 func newTestServer(t *testing.T, opts Options) *Server {
 	t.Helper()
-	return newNamedTestServer(t, "tiny-actions", opts)
+	return newNamedTestServer(t, "aletheia-mikros", opts)
 }
 
 func newNamedTestServer(t *testing.T, modelName string, opts Options) *Server {

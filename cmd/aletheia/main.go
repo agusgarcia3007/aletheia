@@ -82,19 +82,18 @@ func usage(w io.Writer) {
 Usage:
   aletheia init [--config configs/micro.yaml] [--db %s]
   aletheia config inspect --config configs/micro.yaml
-  aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
-  aletheia train --config configs/chat-basic.yaml --dataset datasets/chat_basic.jsonl --out checkpoints/aletheia-chat-basic
+  aletheia train --config configs/aletheia-mikros.yaml --dataset datasets/aletheia_mikros.jsonl --out checkpoints/aletheia-mikros
   aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
-  aletheia run --checkpoint checkpoints/tiny-actions --prompt "<USER>fix failing go test<ASSISTANT>"
+  aletheia run --checkpoint checkpoints/aletheia-mikros --prompt "<USER>hola como estas?<ASSISTANT>"
   aletheia index ./docs [--config configs/micro.yaml] [--db %s]
   aletheia ask --query "qué decisión tomamos sobre el selector?" [--config configs/micro.yaml] [--db %s]
   aletheia memory inspect [--config configs/micro.yaml] [--db %s]
   aletheia memory skills [--config configs/micro.yaml] [--db %s]
   aletheia memory graph [--config configs/micro.yaml] [--db %s] [--type patch_candidate]
-  aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoints/tiny-actions] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam|mcts] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
+  aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoint-dir] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam|mcts] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap [--json]
   aletheia learn --db %s --suite evals/bootstrap --out datasets/generated [--train-selector-out checkpoints/selector-generated]
-  aletheia serve [--addr :8080] [--checkpoint checkpoints/aletheia-chat-basic] [--model aletheia-chat-basic] [--api-key $ALETHEIA_API_KEY]
+  aletheia serve [--addr :8080] [--checkpoint checkpoints/aletheia-mikros] [--model aletheia-mikros] [--api-key $ALETHEIA_API_KEY]
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 }
 
@@ -185,9 +184,9 @@ func runInit(args []string) error {
 
 func runTrain(args []string) error {
 	fs := flag.NewFlagSet("train", flag.ContinueOnError)
-	configPath := fs.String("config", "configs/tiny.yaml", "training config YAML")
-	datasetPath := fs.String("dataset", "datasets/bootstrap_actions.jsonl", "JSONL training dataset")
-	outDir := fs.String("out", "checkpoints/tiny-actions", "checkpoint output directory")
+	configPath := fs.String("config", "configs/aletheia-mikros.yaml", "training config YAML")
+	datasetPath := fs.String("dataset", "datasets/aletheia_mikros.jsonl", "JSONL training dataset")
+	outDir := fs.String("out", "checkpoints/aletheia-mikros", "checkpoint output directory")
 	steps := fs.Int("steps", 0, "override training steps")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -247,7 +246,7 @@ func runTrainSelector(args []string) error {
 func runModel(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := fs.String("config", "", "configuration YAML path")
-	checkpoint := fs.String("checkpoint", "checkpoints/tiny-actions", "checkpoint directory")
+	checkpoint := fs.String("checkpoint", "checkpoints/aletheia-mikros", "checkpoint directory")
 	prompt := fs.String("prompt", "", "prompt text")
 	maxTokens := fs.Int("max-tokens", 32, "maximum generated tokens")
 	topK := fs.Int("top-k", 8, "top-k candidates to print from the first step")

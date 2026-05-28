@@ -20,8 +20,8 @@ Current loop:
 Checkpoints are split by responsibility:
 
 - model checkpoints store `manifest.json` and `weights.f32`;
-- `aletheia-chat-basic` is the public basic-chat checkpoint for `serve`;
-- `tiny-actions` remains the action-planner checkpoint for `run`/planner experiments and is not used as the chat default;
+- `aletheia-mikros` is the first public basic-chat checkpoint for `train`, `run`, and `serve`;
+- `solve` remains verifier-first and does not require a served planner checkpoint by default;
 - selector checkpoints store `selector.json` with fixed feature names and linear weights.
 
 Skill reuse is opt-in with `solve --use-skills`. A successful normal solve can write a compressed skill to the existing `skills` table, while a later matching solve can skip the initial verifier, replay the compressed action sequence, verify the patch, and report fewer tool calls. Failed skill reuse restores the touched files, marks the skill success rate as `0`, and falls back to the normal solver path.
@@ -42,4 +42,4 @@ The repair engine is still intentionally small and deterministic. Later mileston
 
 Model scaling is manual. `configs/core-100m.yaml` is a target configuration, not an automatic test path; scaling should wait for eval evidence that a checkpoint beats the current mock/heuristic stack.
 
-Deployment is inference-only in v1. `aletheia serve` loads one checkpoint and serves `/v1/models`, `/v1/chat/completions`, and `/v1/completions` behind local Bearer auth. The Docker/Dokploy default is `aletheia-chat-basic`; `tiny-actions` can be served only by explicit override. The API does not expose `solve`, verifiers, repository access, or command execution.
+Deployment is inference-only in v1. `aletheia serve` loads one checkpoint and serves `/v1/models`, `/v1/chat/completions`, and `/v1/completions` behind local Bearer auth. The Docker/Dokploy default is the single public checkpoint, `aletheia-mikros`. The API does not expose `solve`, verifiers, repository access, or command execution.

@@ -5,7 +5,7 @@ project:
   memory_db: ./data/memory.sqlite
 
 model:
-  name: aletheia-chat-basic
+  name: aletheia-mikros
   vocab_size: 512
   context_length: 256
   n_layers: 1

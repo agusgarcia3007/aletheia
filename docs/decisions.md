@@ -157,8 +157,8 @@
 
 ## Milestone 20
 
-- Add `aletheia-chat-basic` as a separate local prompt/completion checkpoint for basic conversation.
-- Keep `tiny-actions` as the action planner for `solve` and planner experiments; do not use it as the public chat default.
-- Train chat locally from `datasets/chat_basic.jsonl` with short `<EOS>`-terminated completions.
-- Keep chat capability intentionally narrow: greetings, identity, limits, Aletheia commands, API usage, and soft abstention.
-- Make Docker/Dokploy serve `aletheia-chat-basic` by default while still building `tiny-actions` for explicit planner-token deployments.
+- Use `aletheia-mikros` as the first public local prompt/completion checkpoint.
+- Keep the first public model intentionally narrow: greetings, identity, limits, Aletheia commands, API usage, and soft abstention.
+- Train it locally from `datasets/aletheia_mikros.jsonl` with short `<EOS>`-terminated completions.
+- Keep `solve` verifier-first and separate from the public chat API; it does not require a served planner checkpoint by default.
+- Make Docker/Dokploy build and serve one checkpoint only: `aletheia-mikros`.

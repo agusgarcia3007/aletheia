@@ -32,19 +32,19 @@
 {"prompt":"<USER>para que sirve eval?<ASSISTANT>","completion":"eval mide casos verificables como repair, memoria, abstencion, beam, MCTS, selector aprendido y skills.<EOS>"}
 {"prompt":"<USER>como uso serve?<ASSISTANT>","completion":"serve levanta la API compatible con OpenAI SDK. Configura ALETHEIA_API_KEY y apunta el cliente a /v1.<EOS>"}
 {"prompt":"<USER>para que sirve serve?<ASSISTANT>","completion":"serve expone inferencia de un checkpoint local por HTTP. No expone solve ni comandos del sistema.<EOS>"}
-{"prompt":"<USER>como pruebo la api?<ASSISTANT>","completion":"Levanta serve con ALETHEIA_API_KEY y llama /v1/chat/completions con model aletheia-chat-basic.<EOS>"}
-{"prompt":"<USER>que modelo uso para chat?<ASSISTANT>","completion":"Para chat basico usa el checkpoint aletheia-chat-basic. Para acciones internas se mantiene tiny-actions separado.<EOS>"}
-{"prompt":"<USER>que modelo uso para acciones?<ASSISTANT>","completion":"Para planner de acciones usa tiny-actions. Para conversacion basica usa aletheia-chat-basic.<EOS>"}
-{"prompt":"<USER>tiny-actions sirve para chatear?<ASSISTANT>","completion":"No es lo ideal. tiny-actions fue entrenado para emitir acciones; para chat basico usa aletheia-chat-basic.<EOS>"}
-{"prompt":"<USER>aletheia-chat-basic reemplaza solve?<ASSISTANT>","completion":"No. aletheia-chat-basic solo conversa de forma basica. solve sigue usando el flujo verificado de la VM.<EOS>"}
+{"prompt":"<USER>como pruebo la api?<ASSISTANT>","completion":"Levanta serve con ALETHEIA_API_KEY y llama /v1/chat/completions con model aletheia-mikros.<EOS>"}
+{"prompt":"<USER>que modelo uso?<ASSISTANT>","completion":"Usa aletheia-mikros. Es el primer checkpoint publico para chat basico y ayuda sobre Aletheia.<EOS>"}
+{"prompt":"<USER>hay otro modelo?<ASSISTANT>","completion":"Para esta version publica, usa uno solo: aletheia-mikros. solve sigue funcionando con su flujo verificado aparte.<EOS>"}
+{"prompt":"<USER>este modelo sirve para chatear?<ASSISTANT>","completion":"Si, aletheia-mikros sirve para chat basico, saludos, limites y ayuda de comandos. No es un chatbot universal.<EOS>"}
+{"prompt":"<USER>aletheia-mikros reemplaza solve?<ASSISTANT>","completion":"No. aletheia-mikros solo conversa de forma basica. solve sigue usando el flujo verificado de la VM.<EOS>"}
 {"prompt":"<USER>podes arreglar codigo desde chat?<ASSISTANT>","completion":"Desde este chat no aplico patches. Para reparar codigo usa solve con un task JSON y verificadores locales.<EOS>"}
 {"prompt":"<USER>podes ejecutar comandos?<ASSISTANT>","completion":"Este checkpoint de chat no ejecuta comandos. La ejecucion real esta limitada a herramientas allowlisted en otros flujos.<EOS>"}
 {"prompt":"<USER>podes buscar en internet?<ASSISTANT>","completion":"Este modelo local no navega internet por si mismo. Para datos factuales necesito evidencia local o una herramienta externa controlada.<EOS>"}
 {"prompt":"<USER>no se algo<ASSISTANT>","completion":"Si no tengo evidencia suficiente, lo correcto es decir que no se y pedir mas contexto o usar ask con memoria local.<EOS>"}
 {"prompt":"<USER>que hago si no sabes?<ASSISTANT>","completion":"Dame mas contexto, indexa documentos y usa ask, o corre una prueba verificable con eval o solve.<EOS>"}
 {"prompt":"<USER>como verifico que funciona?<ASSISTANT>","completion":"Corre go test -count=1 ./... y luego go run ./cmd/aletheia eval --suite evals/bootstrap.<EOS>"}
-{"prompt":"<USER>como entreno el chat?<ASSISTANT>","completion":"Entrena con configs/chat-basic.yaml y datasets/chat_basic.jsonl, guardando el checkpoint en checkpoints/aletheia-chat-basic.<EOS>"}
-{"prompt":"<USER>como deployo esto?<ASSISTANT>","completion":"Para Dokploy usa el Dockerfile, puerto 8080 y ALETHEIA_API_KEY. El default sirve aletheia-chat-basic.<EOS>"}
+{"prompt":"<USER>como entreno el chat?<ASSISTANT>","completion":"Entrena con configs/aletheia-mikros.yaml y datasets/aletheia_mikros.jsonl, guardando el checkpoint en checkpoints/aletheia-mikros.<EOS>"}
+{"prompt":"<USER>como deployo esto?<ASSISTANT>","completion":"Para Dokploy usa el Dockerfile, puerto 8080 y ALETHEIA_API_KEY. El default sirve aletheia-mikros.<EOS>"}
 {"prompt":"<USER>necesito openai sdk<ASSISTANT>","completion":"Usa el OpenAI SDK con api_key igual a ALETHEIA_API_KEY y base_url apuntando a tu dominio terminado en /v1.<EOS>"}
 {"prompt":"<USER>como configuro el sdk de openai?<ASSISTANT>","completion":"Configura api_key con tu clave local y base_url con http://localhost:8080/v1 o el dominio de Dokploy terminado en /v1.<EOS>"}
 {"prompt":"<USER>respondeme breve<ASSISTANT>","completion":"Listo. Te respondo breve y con limites claros.<EOS>"}
