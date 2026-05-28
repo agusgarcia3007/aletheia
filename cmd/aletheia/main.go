@@ -13,6 +13,7 @@ import (
 	"aletheia/internal/memory"
 	"aletheia/internal/model"
 	"aletheia/internal/runner"
+	"aletheia/internal/selector"
 	"aletheia/internal/tokenizer"
 	"aletheia/internal/training"
 )
@@ -54,7 +55,7 @@ Usage:
   aletheia init [--db %s]
   aletheia train --config configs/tiny.yaml --dataset datasets/bootstrap_actions.jsonl --out checkpoints/tiny-actions
   aletheia run --checkpoint checkpoints/tiny-actions --prompt "<USER>fix failing go test<ASSISTANT>"
-  aletheia solve --task examples/buggy-go/task.json [--db %s]
+  aletheia solve --task examples/buggy-go/task.json [--db %s] [--checkpoint checkpoints/tiny-actions] [--trace]
   aletheia eval --suite evals/bootstrap
 `, memory.DefaultDBPath, memory.DefaultDBPath)
 	return flag.ErrHelp
@@ -165,6 +166,9 @@ func runSolve(args []string) error {
 	taskPath := fs.String("task", "", "task JSON path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	timeout := fs.Duration("timeout", 60*time.Second, "verifier timeout")
+	checkpoint := fs.String("checkpoint", "", "optional model checkpoint directory")
+	maxSteps := fs.Int("max-steps", 8, "maximum Cognitive VM action steps")
+	trace := fs.Bool("trace", false, "print Cognitive VM action trace")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -177,9 +181,25 @@ func runSolve(args []string) error {
 		return err
 	}
 
+	var planner cognitivevm.Planner = cognitivevm.MockPlanner{}
+	if *checkpoint != "" {
+		tok := tokenizer.New()
+		m, _, err := model.Load(*checkpoint, tok.VocabSize())
+		if err != nil {
+			return err
+		}
+		planner = cognitivevm.ModelPlanner{
+			Runner: runner.New(m, tok),
+			TopK:   8,
+		}
+	}
+
 	solver := cognitivevm.Solver{
 		DBPath:          *dbPath,
 		VerifierTimeout: *timeout,
+		Planner:         planner,
+		Selector:        selector.HeuristicSelector{},
+		MaxSteps:        *maxSteps,
 	}
 	result, err := solver.SolveFile(context.Background(), *taskPath, wd)
 	if err != nil {
@@ -189,6 +209,12 @@ func runSolve(args []string) error {
 	fmt.Printf("goal: %s\n", result.Task.Goal)
 	fmt.Printf("repo: %s\n", result.RepoPath)
 	fmt.Printf("initial verifier: %s %s\n", result.Initial.Verifier, result.Initial.Status)
+	if *trace {
+		fmt.Println("trace:")
+		for _, entry := range result.Trace {
+			fmt.Printf("  %02d %s source=%s status=%s verifier=%s reason=%s\n", entry.Step, entry.Action, entry.Source, entry.Status, entry.VerifierStatus, entry.Reason)
+		}
+	}
 	if result.Patched {
 		fmt.Println("patch:")
 		fmt.Print(result.Diff)

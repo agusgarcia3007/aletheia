@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aletheia/internal/memory"
+	"aletheia/internal/selector"
 	"aletheia/internal/verifier"
 )
 
@@ -22,15 +23,20 @@ type Task struct {
 type Solver struct {
 	DBPath          string
 	VerifierTimeout time.Duration
+	Planner         Planner
+	Selector        ActionSelector
+	MaxSteps        int
 }
 
 type Result struct {
-	Task     Task
-	RepoPath string
-	Initial  verifier.Evidence
-	Final    verifier.Evidence
-	Diff     string
-	Patched  bool
+	Task        Task
+	RepoPath    string
+	Initial     verifier.Evidence
+	Final       verifier.Evidence
+	Diff        string
+	Patched     bool
+	Trace       []TraceEntry
+	FinalStatus string
 }
 
 func (s Solver) SolveFile(ctx context.Context, taskPath string, workingDir string) (Result, error) {
@@ -77,85 +83,52 @@ func (s Solver) Solve(ctx context.Context, task Task, workingDir string) (Result
 		return Result{}, err
 	}
 
-	initial, err := verifier.RunSuccess(ctx, repoPath, task.Success, s.VerifierTimeout)
+	planner := s.Planner
+	if planner == nil {
+		planner = MockPlanner{}
+	}
+	actionSelector := s.Selector
+	if actionSelector == nil {
+		actionSelector = selector.HeuristicSelector{}
+	}
+	vm := VM{
+		Store:           store,
+		EpisodeID:       episodeID,
+		VerifierTimeout: s.VerifierTimeout,
+	}
+	state, err := vm.Run(ctx, task, repoPath, planner, actionSelector, s.MaxSteps)
 	if err != nil {
-		return Result{}, err
-	}
-	if _, err := store.RecordEvidence(ctx, toMemoryEvidence(episodeID, initial)); err != nil {
-		return Result{}, err
-	}
-
-	result := Result{
-		Task:     task,
-		RepoPath: repoPath,
-		Initial:  initial,
-		Final:    initial,
-	}
-	if initial.Status == "pass" {
-		if err := store.UpdateEpisodeResult(ctx, episodeID, "already_passed", 1); err != nil {
-			return Result{}, err
-		}
-		return result, nil
-	}
-
-	diff, err := applyToyPatch(repoPath)
-	if err != nil {
-		_ = store.UpdateEpisodeResult(ctx, episodeID, "patch_failed", 0)
-		return Result{}, err
-	}
-	result.Diff = diff
-	result.Patched = true
-
-	final, err := verifier.RunSuccess(ctx, repoPath, task.Success, s.VerifierTimeout)
-	if err != nil {
-		return Result{}, err
-	}
-	result.Final = final
-	if _, err := store.RecordEvidence(ctx, toMemoryEvidence(episodeID, final)); err != nil {
 		return Result{}, err
 	}
 
 	reward := 0.0
-	episodeResult := "failed"
-	if final.Status == "pass" {
+	episodeResult := state.FinalStatus
+	if state.Verified || state.lastVerifierStatus() == "pass" {
 		reward = 1
-		episodeResult = "verified"
+		if episodeResult == "" {
+			episodeResult = "verified"
+		}
+	}
+	if episodeResult == "" {
+		episodeResult = "failed"
 	}
 	if err := store.UpdateEpisodeResult(ctx, episodeID, episodeResult, reward); err != nil {
 		return Result{}, err
 	}
+
+	result := Result{
+		Task:        task,
+		RepoPath:    repoPath,
+		Diff:        state.Diff,
+		Patched:     state.Verified,
+		Trace:       state.ActionTrace,
+		FinalStatus: state.FinalStatus,
+	}
+	if len(state.VerifierResults) > 0 {
+		result.Initial = state.VerifierResults[0]
+		result.Final = state.VerifierResults[len(state.VerifierResults)-1]
+	}
 	return result, nil
-}
-
-func toMemoryEvidence(episodeID int64, ev verifier.Evidence) memory.Evidence {
-	return memory.Evidence{
-		EpisodeID: episodeID,
-		Verifier:  ev.Verifier,
-		Status:    ev.Status,
-		Score:     ev.Score,
-		Stdout:    ev.Stdout,
-		Stderr:    ev.Stderr,
-		Timestamp: ev.Timestamp,
-	}
-}
-
-func applyToyPatch(repoPath string) (string, error) {
-	path := filepath.Join(repoPath, "calculator.go")
-	oldBytes, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	oldText := string(oldBytes)
-	newText := strings.Replace(oldText, "return a - b", "return a + b", 1)
-	if newText == oldText {
-		return "", fmt.Errorf("toy patch pattern not found in %s", path)
-	}
-
-	diff := unifiedDiff("calculator.go", oldText, newText)
-	if err := os.WriteFile(path, []byte(newText), 0o644); err != nil {
-		return "", err
-	}
-	return diff, nil
 }
 
 func unifiedDiff(path string, oldText string, newText string) string {

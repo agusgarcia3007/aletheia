@@ -16,3 +16,10 @@
 - Use a deterministic causal next-token model with float32 tensors and manual gradients so overfit checks run quickly on CPU.
 - Store checkpoints as `manifest.json` plus little-endian `weights.f32`.
 - Keep generated checkpoints ignored by git.
+
+## Milestone 2
+
+- Route `solve` through an explicit Cognitive VM with functional action tokens and action trace.
+- Keep the toy patcher bounded to `examples/buggy-go`, but delay file writes until `<ACT_VERIFY>`.
+- Use a heuristic selector that can fall back safely when model candidates are missing or invalid.
+- Allow optional model-backed planning from a checkpoint without requiring it for `solve`.
