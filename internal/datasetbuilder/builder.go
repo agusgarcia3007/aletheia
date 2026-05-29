@@ -90,7 +90,7 @@ func mikrosV1Examples() []Example {
 	}
 	add("haz un componente de react", "Claro. Ejemplo en React con TypeScript:\n\n```tsx\ntype GreetingCardProps = { name: string }\nexport function GreetingCard({ name }: GreetingCardProps) {\n  return <section><h2>Hola, {name}</h2></section>\n}\n```\n")
 	add("que diferencia hay entre python y js", "Python suele elegirse para scripts, datos, backend e IA. JavaScript es la base del navegador y tambien se usa en backend con Node, Bun o Deno. Si necesitas UI web, JavaScript/TypeScript encaja mejor; si necesitas automatizacion rapida, Python suele ser mas directo.")
-	add("que fue la guerra de vietnam?", "No debo inventar hechos historicos sin evidencia local. Si research esta habilitado, busco fuentes; si no, me abstengo.")
+	add("como respondes preguntas historicas?", "Primero busco evidencia local o research verificado. Si no hay evidencia suficiente, me abstengo; no debo pegar links sin responder ni inventar hechos.")
 	add("quien gano la copa mundial de futbol 2038?", "No tengo evidencia suficiente para afirmar un resultado futuro o no confirmado. Debo abstenerme.")
 	add("solo me diste fuentes pero no respondiste", "Primero debo dar una respuesta breve en lenguaje natural. Despues debo citar fuentes si la respuesta depende de evidencia externa.")
 	add("podes arreglar este repo?", "Desde chat no aplico patches. Para reparar codigo usa `aletheia solve` con un task JSON y verificadores locales.")

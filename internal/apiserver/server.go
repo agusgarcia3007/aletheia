@@ -243,35 +243,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
-	if reply, ok := trainedExampleReply(served, req.Messages); ok {
-		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
-		return
-	}
 	if reply, ok := codingKnowledgeReply(req.Messages); ok {
 		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
-	}
-	if served.ID == mikrosModelName && served.Manifest.Step == 0 {
-		if reply, ok := basicMikrosChatReply(served.ID, req.Messages); ok {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"id":      s.id("chatcmpl"),
-				"object":  "chat.completion",
-				"created": time.Now().Unix(),
-				"model":   served.ID,
-				"choices": []map[string]any{
-					{
-						"index": 0,
-						"message": map[string]any{
-							"role":    "assistant",
-							"content": reply,
-						},
-						"finish_reason": "stop",
-					},
-				},
-				"usage": s.textUsage(prompt, reply),
-			})
-			return
-		}
 	}
 	query := strings.TrimSpace(lastUserMessage(req.Messages))
 	if query != "" && isChatActionRequest(query) {
@@ -308,6 +282,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
 		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
+	}
+	if query != "" && !isResearchableQuestion(query) {
+		if reply, ok := trainedExampleReply(served, req.Messages); ok {
+			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+			return
+		}
+		if served.ID == mikrosModelName && served.Manifest.Step == 0 {
+			if reply, ok := basicMikrosChatReply(served.ID, req.Messages); ok {
+				writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+				return
+			}
+		}
 	}
 	if query != "" && s.store != nil {
 		if answer, ok := s.completedResearchAnswer(r.Context(), query); ok {
@@ -997,6 +983,24 @@ func isCodingTask(query string) bool {
 func isToolUseRequest(query string) bool {
 	normalized := normalizeBasicChat(query)
 	return isCodingTask(normalized) || hasAny(normalized, "read", "search", "grep", "inspect", "list", "run", "test", "build", "edit", "patch", "write")
+}
+
+func isResearchableQuestion(query string) bool {
+	normalized := normalizeBasicChat(query)
+	if normalized == "" || isChatActionRequest(normalized) || isUnsupportedFutureOutcomeQuestion(normalized) {
+		return false
+	}
+	if len(detectCodingLanguages(normalized)) > 0 {
+		return false
+	}
+	if hasAny(normalized, "hola", "gracias", "chau", "adios", "hello", "thanks", "help", "ayuda") {
+		return false
+	}
+	return hasAny(normalized,
+		"que fue", "que es", "quien fue", "quien es", "cuando", "donde", "por que",
+		"what is", "what was", "who is", "who was", "when", "where", "why",
+		"historia", "guerra", "pais", "empresa", "protocolo", "actual", "latest",
+	)
 }
 
 var yearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)

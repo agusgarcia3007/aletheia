@@ -61,6 +61,9 @@ func trainedExampleReply(served *servedModel, messages []chatMessage) (string, b
 		if !frameworkCompatible(user, ex.normalizedUser) {
 			continue
 		}
+		if !programmingLanguageCompatible(user, ex.normalizedUser) {
+			continue
+		}
 		score := exampleScore(user, queryTerms, ex)
 		if score > bestScore {
 			best = ex
@@ -96,6 +99,27 @@ func frameworkCompatible(user string, example string) bool {
 		userHas := strings.Contains(user, framework)
 		exampleHas := strings.Contains(example, framework)
 		if userHas != exampleHas {
+			return false
+		}
+	}
+	return true
+}
+
+func programmingLanguageCompatible(user string, example string) bool {
+	userLanguages := detectCodingLanguages(user)
+	exampleLanguages := detectCodingLanguages(example)
+	if len(userLanguages) == 0 || len(exampleLanguages) == 0 {
+		return true
+	}
+	if len(userLanguages) != len(exampleLanguages) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, lang := range userLanguages {
+		seen[lang.Name] = true
+	}
+	for _, lang := range exampleLanguages {
+		if !seen[lang.Name] {
 			return false
 		}
 	}

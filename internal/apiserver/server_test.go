@@ -279,6 +279,7 @@ func TestCodingKnowledgePromptsStayNaturalAndOutOfResearch(t *testing.T) {
 	}{
 		{message: "hablame de rust", want: []string{"Rust", "seguridad"}, forbid: []string{"Fuentes:", "job_id="}},
 		{message: "como hago una funcion en javacript?", want: []string{"JavaScript", "function add"}, forbid: []string{"```go", "Fuentes:"}},
+		{message: "como hago una funcion en javascript?", want: []string{"JavaScript", "function add"}, forbid: []string{"```go", "Fuentes:"}},
 		{message: "que diferencia hay enter python y js", want: []string{"Python", "JavaScript"}, forbid: []string{"computerhoy", "Fuentes:"}},
 	}
 	for _, tt := range cases {
@@ -336,7 +337,7 @@ func TestChatUsesTrainedExamplesForActionRequests(t *testing.T) {
 		want    string
 	}{
 		{message: "haz un componente de react", want: "GreetingCard"},
-		{message: "como es el codigo en rust?", want: "println!"},
+		{message: "como es el codigo en rust?", want: "seguridad"},
 	}
 	for _, tt := range cases {
 		rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"`+tt.message+`"}]}`, "secret")
@@ -404,6 +405,25 @@ func TestChatKnowledgeGapQueuesResearchJob(t *testing.T) {
 	}
 	if len(jobs) != 1 || jobs[0].Status != "queued" {
 		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestResearchableQuestionBypassesTrainedFactualExample(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServerWithExamples(t, []string{
+		`{"prompt":"<USER>que fue la guerra de vietnam?<ASSISTANT>","completion":"No debo inventar hechos historicos sin evidencia local.<EOS>"}`,
+	}, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"que fue la guerra de vietnam?"}]}`, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "job_id=") || strings.Contains(rec.Body.String(), "No debo inventar") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
