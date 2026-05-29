@@ -71,6 +71,6 @@ const response = await client.chat.completions.create({
 console.log(response.choices[0].message.content);
 ```
 
-`aletheia-mikros` is the first public checkpoint: a small local model for basic conversation and Aletheia command help. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
+`aletheia-mikros` is the first public checkpoint/profile: a small local model with stable basic conversation and Aletheia command help. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
 
 See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.

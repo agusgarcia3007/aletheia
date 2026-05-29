@@ -74,6 +74,9 @@ func TestChatCompletionsReturnsOpenAIShape(t *testing.T) {
 	if len(response.Choices) != 1 || response.Choices[0].Message.Role != "assistant" || response.Choices[0].Message.Content == "" {
 		t.Fatalf("choices = %+v", response.Choices)
 	}
+	if !strings.Contains(response.Choices[0].Message.Content, "Aletheia Mikros") {
+		t.Fatalf("content = %q", response.Choices[0].Message.Content)
+	}
 	if response.Usage["prompt_tokens"] == 0 || response.Usage["completion_tokens"] == 0 {
 		t.Fatalf("usage = %+v", response.Usage)
 	}
@@ -127,6 +130,9 @@ func TestMikrosCheckpointDoesNotEmitActionTokensForGreeting(t *testing.T) {
 	}
 	content := response.Choices[0].Message.Content
 	if strings.TrimSpace(content) == "" || strings.Contains(content, "<ACT_") {
+		t.Fatalf("content = %q", content)
+	}
+	if !strings.Contains(content, "Aletheia Mikros") {
 		t.Fatalf("content = %q", content)
 	}
 }

@@ -160,6 +160,26 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "messages", "invalid_messages", err.Error())
 		return
 	}
+	if reply, ok := basicMikrosChatReply(s.opts.ModelName, req.Messages); ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":      s.id("chatcmpl"),
+			"object":  "chat.completion",
+			"created": time.Now().Unix(),
+			"model":   s.opts.ModelName,
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": reply,
+					},
+					"finish_reason": "stop",
+				},
+			},
+			"usage": s.textUsage(prompt, reply),
+		})
+		return
+	}
 	generated, usage, err := s.generate(prompt, generationOptions{
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
@@ -305,6 +325,16 @@ func (s *Server) generate(prompt string, opts generationOptions) (string, map[st
 		"completion_tokens": len(generatedTokens),
 		"total_tokens":      len(tokens),
 	}, nil
+}
+
+func (s *Server) textUsage(prompt string, completion string) map[string]int {
+	promptTokens := s.tokenizer.Encode(prompt)
+	completionTokens := s.tokenizer.Encode(completion)
+	return map[string]int{
+		"prompt_tokens":     len(promptTokens),
+		"completion_tokens": len(completionTokens),
+		"total_tokens":      len(promptTokens) + len(completionTokens),
+	}
 }
 
 func trimStopTokens(tokens []int, stopTokens ...int) []int {
