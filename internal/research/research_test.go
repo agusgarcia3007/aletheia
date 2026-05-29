@@ -155,7 +155,7 @@ func TestWorkerBuildsAnswerFromClaimNotTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Answer, "lets agents connect") || strings.Contains(result.Answer, "Model Context Protocol\n\nEvidence") {
+	if !strings.Contains(result.Answer, "lets agents connect") || strings.Contains(result.Answer, "Evidence status") || strings.Contains(result.Answer, "Source:") {
 		t.Fatalf("answer = %q", result.Answer)
 	}
 }

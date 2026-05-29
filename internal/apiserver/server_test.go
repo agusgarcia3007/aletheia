@@ -499,6 +499,9 @@ func TestChatUsesCompletedResearchAnswerBeforeRetriever(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "open protocol") || !strings.Contains(rec.Body.String(), "https://modelcontextprotocol.io") {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	if strings.Contains(rec.Body.String(), "Evidence status") || strings.Contains(rec.Body.String(), "Source:") {
+		t.Fatalf("body leaked research metadata: %s", rec.Body.String())
+	}
 }
 
 func TestChatDoesNotCiteBlockedResearchSources(t *testing.T) {
@@ -569,7 +572,7 @@ func TestCompletedResearchAnswerStripsPageChrome(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "WhatsApp") || strings.Contains(rec.Body.String(), "Copiar URL") || !strings.Contains(rec.Body.String(), "Guerra de Vietnam") {
+	if strings.Contains(rec.Body.String(), "WhatsApp") || strings.Contains(rec.Body.String(), "Copiar URL") || strings.Contains(rec.Body.String(), "Evidence status") || strings.Contains(rec.Body.String(), "Source:") || !strings.Contains(rec.Body.String(), "Guerra de Vietnam") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

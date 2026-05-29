@@ -859,7 +859,7 @@ func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []me
 		best = bestResearchCandidate(query, queryTokens, sourceTitles, best, source.Snippet)
 	}
 	if best.text != "" {
-		return withEvidenceStatus(best.text, evidenceStatusFromAnswer(job.Answer))
+		return best.text
 	}
 	answer := strings.TrimSpace(job.Answer)
 	answer = cleanPublicResearchText(query, answer)
@@ -1017,25 +1017,6 @@ func trimBeforePublicCoreTerm(query string, text string) string {
 		}
 	}
 	return text
-}
-
-func withEvidenceStatus(text string, status string) string {
-	lower := strings.ToLower(text)
-	if status == "" || strings.Contains(lower, "evidence status:") || strings.Contains(lower, "estado de evidencia:") {
-		return text
-	}
-	return fmt.Sprintf("%s\n\nEstado de evidencia: %s", text, status)
-}
-
-func evidenceStatusFromAnswer(answer string) string {
-	for _, line := range strings.Split(answer, "\n") {
-		line = strings.TrimSpace(line)
-		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "evidence status:") {
-			return strings.TrimSpace(line[len("Evidence status:"):])
-		}
-	}
-	return research.StatusWebSupported
 }
 
 func looksLikeTitleOnly(text string) bool {
@@ -1231,14 +1212,15 @@ func formatCitations(citations []retriever.Citation) string {
 
 func researchResultJSON(jobID string, result research.ResearchResult) map[string]any {
 	return map[string]any{
-		"status":         "completed",
-		"job_id":         jobID,
-		"sources_found":  len(result.Sources),
-		"sources_stored": result.SourcesStored,
-		"chunks_stored":  result.ChunksStored,
-		"claims_stored":  result.ClaimsStored,
-		"confidence":     result.Confidence,
-		"answer":         result.Answer,
+		"status":          "completed",
+		"job_id":          jobID,
+		"sources_found":   len(result.Sources),
+		"sources_stored":  result.SourcesStored,
+		"chunks_stored":   result.ChunksStored,
+		"claims_stored":   result.ClaimsStored,
+		"confidence":      result.Confidence,
+		"evidence_status": result.EvidenceStatus,
+		"answer":          result.Answer,
 	}
 }
 

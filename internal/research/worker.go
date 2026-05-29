@@ -333,11 +333,7 @@ func answerFromSources(query string, report ResearchResult) string {
 		}
 	}
 	if best != "" {
-		for _, source := range report.Sources {
-			if source.Status == "stored" {
-				return fmt.Sprintf("%s\n\nEvidence status: %s\nSource: %s", best, report.EvidenceStatus, source.Fetched.FinalURL)
-			}
-		}
+		return best
 	}
 	return fmt.Sprintf("No hay evidencia web suficiente para responder sobre %q.", query)
 }
