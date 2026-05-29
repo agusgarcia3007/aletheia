@@ -238,6 +238,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		respond(s.toolCallResponse(responseModelID(req.Model, served.ID), toolCall, s.textUsage(prompt, toolCall.Function.Name)))
 		return
 	}
+	if reply, ok := codingToolResultReply(req.Messages); ok {
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+		return
+	}
 	if reply, ok := policyReply(served.ID, req.Messages); ok {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return

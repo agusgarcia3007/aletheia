@@ -167,6 +167,39 @@ func TestChatCompletionsStreamsToolCallsForAgentClients(t *testing.T) {
 	}
 }
 
+func TestAgentAnalysisPrefersListBeforeRead(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[{"role":"user","content":"analiza este repositorio"}],
+		"tools":[
+			{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"limit":{"type":"integer"},"offset":{"type":"integer"}},"required":["filePath"]}}},
+			{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}
+		]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"list_files"`) || strings.Contains(rec.Body.String(), `"name":"read"`) {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAgentToolResultStopsRepeatedToolLoop(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[
+			{"role":"user","content":"analiza este repositorio"},
+			{"role":"assistant","content":null},
+			{"role":"tool","tool_call_id":"call_1","content":"README.md\ngo.mod\ncmd/aletheia/main.go"}
+		],
+		"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"limit":{"type":"integer"},"offset":{"type":"integer"}},"required":["filePath"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), "README.md") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCompletionsAndBodyLimit(t *testing.T) {
 	server := newTestServer(t, Options{APIKey: "secret"})
 	completion := serveJSON(t, server, "/v1/completions", `{"model":"aletheia-mikros","prompt":"<USER>x<ASSISTANT>","max_tokens":4}`, "secret")

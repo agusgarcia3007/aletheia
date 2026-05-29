@@ -23,6 +23,9 @@ func (s *Server) codingToolCall(modelID string, req chatCompletionRequest) (assi
 	if modelID != hephaestusModelName || len(req.Tools) == 0 {
 		return assistantToolCall{}, false
 	}
+	if hasToolResult(req.Messages) {
+		return assistantToolCall{}, false
+	}
 	last := normalizeBasicChat(lastUserMessage(req.Messages))
 	if last == "" {
 		return assistantToolCall{}, false
@@ -48,6 +51,9 @@ func (s *Server) codingToolCall(modelID string, req chatCompletionRequest) (assi
 
 func chooseCodingTool(prompt string, tools []chatTool) (chatTool, bool) {
 	preferred := []string{"read", "grep", "search", "list", "edit", "write", "patch", "run", "exec", "bash", "shell", "command", "test"}
+	if strings.Contains(prompt, "analiza") || strings.Contains(prompt, "analyze") || strings.Contains(prompt, "inspect") || strings.Contains(prompt, "repositorio") || strings.Contains(prompt, "repository") {
+		preferred = []string{"list", "glob", "find", "search", "grep", "read", "run", "exec", "bash", "shell", "command"}
+	}
 	if strings.Contains(prompt, "test") || strings.Contains(prompt, "build") || strings.Contains(prompt, "run") {
 		preferred = []string{"run", "exec", "bash", "shell", "command", "test", "read", "grep", "search", "list", "edit", "write", "patch"}
 	}
@@ -73,25 +79,36 @@ func synthesizeToolArguments(prompt string, tool chatTool) map[string]any {
 	}
 	_ = json.Unmarshal(tool.Function.Parameters, &schema)
 	for name, raw := range schema.Properties {
-		args[name] = defaultArgument(name, raw, prompt)
+		args[name] = defaultArgument(tool.Function.Name, name, raw, prompt)
 	}
 	for _, name := range schema.Required {
 		if _, ok := args[name]; !ok {
-			args[name] = defaultArgument(name, nil, prompt)
+			args[name] = defaultArgument(tool.Function.Name, name, nil, prompt)
 		}
 	}
 	return args
 }
 
-func defaultArgument(name string, raw json.RawMessage, prompt string) any {
+func defaultArgument(toolName string, name string, raw json.RawMessage, prompt string) any {
+	toolLower := strings.ToLower(toolName)
 	lower := strings.ToLower(name)
 	switch {
+	case strings.Contains(lower, "limit"):
+		return 200
+	case strings.Contains(lower, "offset"):
+		return 0
 	case strings.Contains(lower, "command") || strings.Contains(lower, "cmd"):
 		if strings.Contains(prompt, "test") {
 			return "go test ./..."
 		}
 		return "pwd"
 	case strings.Contains(lower, "path") || strings.Contains(lower, "file"):
+		if strings.Contains(prompt, "analiza") || strings.Contains(prompt, "analyze") || strings.Contains(prompt, "repositorio") || strings.Contains(prompt, "repository") {
+			if strings.Contains(toolLower, "list") || strings.Contains(toolLower, "glob") || strings.Contains(toolLower, "find") || strings.Contains(toolLower, "search") || strings.Contains(toolLower, "grep") {
+				return "."
+			}
+			return "README.md"
+		}
 		return "."
 	case strings.Contains(lower, "query") || strings.Contains(lower, "pattern") || strings.Contains(lower, "search"):
 		return prompt
@@ -114,6 +131,41 @@ func defaultArgument(name string, raw json.RawMessage, prompt string) any {
 	default:
 		return prompt
 	}
+}
+
+func hasToolResult(messages []chatMessage) bool {
+	for _, msg := range messages {
+		if msg.Role == "tool" {
+			return true
+		}
+	}
+	return false
+}
+
+func codingToolResultReply(messages []chatMessage) (string, bool) {
+	var results []string
+	for _, msg := range messages {
+		if msg.Role != "tool" {
+			continue
+		}
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		if len([]rune(content)) > 1600 {
+			runes := []rune(content)
+			content = string(runes[:1600]) + "..."
+		}
+		results = append(results, content)
+	}
+	if len(results) == 0 {
+		return "", false
+	}
+	last := normalizeBasicChat(lastUserMessage(messages))
+	if strings.Contains(last, "analiza") || strings.Contains(last, "analyze") || strings.Contains(last, "repositorio") || strings.Contains(last, "repository") {
+		return "Recibí información del repositorio. Con esa evidencia, el siguiente paso útil es revisar los archivos principales y detectar stack, comandos de test/build y puntos de entrada. Resultado observado:\n\n" + results[len(results)-1], true
+	}
+	return "Recibí el resultado de la herramienta y no voy a repetir la misma llamada. Resultado:\n\n" + results[len(results)-1], true
 }
 
 func (s *Server) toolCallResponse(modelID string, toolCall assistantToolCall, usage map[string]int) map[string]any {
