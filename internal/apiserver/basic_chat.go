@@ -19,9 +19,9 @@ func basicMikrosChatReply(modelName string, messages []chatMessage) (string, boo
 		return "Hola. Soy Aletheia Mikros, un modelo local experimental. Estoy listo para ayudar con respuestas basicas sobre Aletheia.", true
 	case hasAny(normalized, "como estas", "how are you"):
 		return "Estoy funcionando localmente y listo para ayudar con Aletheia, comandos, pruebas y API.", true
-	case hasAny(normalized, "quien sos", "que sos", "como te llamas", "what are you", "who are you"):
+	case hasAny(normalized, "quien sos", "quien eres", "que sos", "como te llamas", "tu nombre", "what are you", "who are you"):
 		return "Soy Aletheia Mikros, el primer modelo local basico de Aletheia. Soy experimental y tengo capacidades acotadas.", true
-	case hasAny(normalized, "que podes hacer", "que puedes hacer", "what can you do", "ayuda", "help"):
+	case hasAny(normalized, "que podes hacer", "que puedes hacer", "que sabes hacer", "what can you do", "ayuda", "help"):
 		return "Puedo conversar de forma basica y orientarte con comandos como ask, solve, eval, serve y train.", true
 	case strings.Contains(normalized, "ask"):
 		return "ask responde preguntas usando memoria local indexada y se abstiene cuando no tiene evidencia suficiente.", true

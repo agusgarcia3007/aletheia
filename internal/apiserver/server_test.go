@@ -151,9 +151,15 @@ func TestChatSmalltalkDoesNotCreateResearchJob(t *testing.T) {
 			MaxSources:         3,
 		},
 	})
-	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"hola"}]}`, "secret")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	for _, message := range []string{"hola", "quien eres?", "quien sos vos?", "que sabes hacer?"} {
+		body := `{"model":"aletheia-mikros","messages":[{"role":"user","content":"` + message + `"}]}`
+		rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("message %q status = %d body=%s", message, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "job_id=") {
+			t.Fatalf("message %q triggered research: %s", message, rec.Body.String())
+		}
 	}
 	jobs, err := store.ListResearchJobs(contextBackground(), 10)
 	if err != nil {
