@@ -136,15 +136,34 @@ func TestChatCompletionsReturnsOpenAIShape(t *testing.T) {
 	}
 }
 
-func TestChatCompletionsRejectsStreamAndWrongModel(t *testing.T) {
+func TestChatCompletionsStreamsAndIgnoresClientOptions(t *testing.T) {
 	server := newTestServer(t, Options{APIKey: "secret"})
-	stream := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"x"}],"stream":true}`, "secret")
-	if stream.Code != http.StatusBadRequest || !strings.Contains(stream.Body.String(), "unsupported_parameter") {
+	stream := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"hola"}],"stream":true,"stream_options":{"include_usage":true},"service_tier":"auto"}`, "secret")
+	if stream.Code != http.StatusOK || !strings.Contains(stream.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(stream.Body.String(), "chat.completion.chunk") || !strings.Contains(stream.Body.String(), "[DONE]") {
 		t.Fatalf("stream status = %d body=%s", stream.Code, stream.Body.String())
 	}
+}
+
+func TestChatCompletionsRejectsWrongModel(t *testing.T) {
+	server := newTestServer(t, Options{APIKey: "secret"})
 	wrongModel := serveJSON(t, server, "/v1/chat/completions", `{"model":"other","messages":[{"role":"user","content":"x"}]}`, "secret")
 	if wrongModel.Code != http.StatusBadRequest || !strings.Contains(wrongModel.Body.String(), "model_not_found") {
 		t.Fatalf("wrong model status = %d body=%s", wrongModel.Code, wrongModel.Body.String())
+	}
+}
+
+func TestChatCompletionsStreamsToolCallsForAgentClients(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[{"role":"user","content":"analiza este repositorio"}],
+		"stream":true,
+		"stream_options":{"include_usage":true},
+		"tools":[{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), `"finish_reason":"tool_calls"`) || !strings.Contains(rec.Body.String(), "[DONE]") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

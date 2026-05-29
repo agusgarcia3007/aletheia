@@ -22,3 +22,10 @@ profiles are implementation details and are not required in client config.
 The public Aletheia API may return OpenAI-style `assistant.tool_calls` when the
 client sends `tools`, but it never executes tools server-side. The coding agent
 client remains responsible for filesystem edits, shell commands, and safety.
+
+Compatibility notes:
+
+- Chat Completions accepts OpenAI client extension fields such as
+  `stream_options`.
+- `stream:true` is supported with Server-Sent Events and may emit either content
+  chunks or `assistant.tool_calls` chunks.

@@ -217,13 +217,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeRequest(w, r, &req) {
 		return
 	}
+	respond := func(response map[string]any) {
+		s.writeChatCompletion(w, req.Stream, response)
+	}
 	served, routed, err := s.routeModel(req.Model, req.Messages, req.Tools)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "model", "model_not_found", err.Error())
-		return
-	}
-	if req.Stream {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "stream", "unsupported_parameter", "streaming is not supported by this Aletheia server")
 		return
 	}
 	prompt, err := chatPrompt(req.Messages)
@@ -236,15 +235,15 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		maxTokens = req.MaxCompletionTokens
 	}
 	if toolCall, ok := s.codingToolCall(served.ID, req); ok {
-		writeJSON(w, http.StatusOK, s.toolCallResponse(responseModelID(req.Model, served.ID), toolCall, s.textUsage(prompt, toolCall.Function.Name)))
+		respond(s.toolCallResponse(responseModelID(req.Model, served.ID), toolCall, s.textUsage(prompt, toolCall.Function.Name)))
 		return
 	}
 	if reply, ok := policyReply(served.ID, req.Messages); ok {
-		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
 	if reply, ok := codingKnowledgeReply(req.Messages); ok {
-		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
 	query := strings.TrimSpace(lastUserMessage(req.Messages))
@@ -259,7 +258,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusInternalServerError, "server_error", "", "generation_failed", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		respond(map[string]any{
 			"id":      s.id("chatcmpl"),
 			"object":  "chat.completion",
 			"created": time.Now().Unix(),
@@ -280,29 +279,29 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if query != "" && isUnsupportedFutureOutcomeQuestion(query) {
 		content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
-		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
 	if query != "" && !isResearchableQuestion(query) {
 		if reply, ok := trainedExampleReply(served, req.Messages); ok {
-			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+			respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 			return
 		}
 		if served.ID == mikrosModelName && served.Manifest.Step == 0 {
 			if reply, ok := basicMikrosChatReply(served.ID, req.Messages); ok {
-				writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+				respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 				return
 			}
 		}
 	}
 	if query != "" && s.store != nil {
 		if answer, ok := s.completedResearchAnswer(r.Context(), query); ok {
-			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), answer, s.textUsage(prompt, answer)))
+			respond(s.chatResponse(responseModelID(req.Model, served.ID), answer, s.textUsage(prompt, answer)))
 			return
 		}
 		answer, err := (retriever.Retriever{Store: s.store}).Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
 		if err == nil && answer.Verified {
-			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
+			respond(s.chatResponse(responseModelID(req.Model, served.ID), answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
 			return
 		}
 		researchMode := "background"
@@ -313,19 +312,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			job, err := s.enqueueResearch(r.Context(), query, researchMode, 0)
 			if err == nil {
 				content := fmt.Sprintf("No tengo evidencia local suficiente. Inicié una investigación en background con job_id=%s. Consultá el resultado en unos segundos o repetí la pregunta luego.", job.ID)
-				writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
+				respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 				return
 			}
 		}
 		if researchMode == "off" || !s.research.Enabled {
 			content := "No tengo evidencia local suficiente para responder. La investigación web está deshabilitada."
-			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
+			respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 			return
 		}
 	}
 	if routed && served.ID == hephaestusModelName {
 		content := "Puedo ayudar con codigo, pero necesito un poco mas de contexto: lenguaje, objetivo, entrada/salida esperada y restricciones. No voy a buscar fuentes web para inventar una respuesta."
-		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
 	generated, usage, err := s.generate(served, prompt, generationOptions{
@@ -338,7 +337,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "server_error", "", "generation_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	respond(map[string]any{
 		"id":      s.id("chatcmpl"),
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
@@ -381,6 +380,122 @@ func (s *Server) chatResponse(modelID string, content string, usage map[string]i
 			},
 		},
 		"usage": usage,
+	}
+}
+
+func (s *Server) writeChatCompletion(w http.ResponseWriter, stream bool, response map[string]any) {
+	if !stream {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	writeChatCompletionStream(w, response)
+}
+
+func writeChatCompletionStream(w http.ResponseWriter, response map[string]any) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	id, _ := response["id"].(string)
+	modelID, _ := response["model"].(string)
+	created, _ := response["created"].(int64)
+	if created == 0 {
+		created = time.Now().Unix()
+	}
+	finishReason := "stop"
+	message := map[string]any{"role": "assistant", "content": ""}
+	if choices, ok := response["choices"].([]map[string]any); ok && len(choices) > 0 {
+		if reason, ok := choices[0]["finish_reason"].(string); ok && reason != "" {
+			finishReason = reason
+		}
+		if got, ok := choices[0]["message"].(map[string]any); ok {
+			message = got
+		}
+	}
+	writeSSEChunk(w, flusher, map[string]any{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   modelID,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         map[string]any{"role": "assistant"},
+			"finish_reason": nil,
+		}},
+	})
+	if toolCalls, ok := message["tool_calls"].([]assistantToolCall); ok && len(toolCalls) > 0 {
+		chunkCalls := make([]map[string]any, 0, len(toolCalls))
+		for i, call := range toolCalls {
+			chunkCalls = append(chunkCalls, map[string]any{
+				"index": i,
+				"id":    call.ID,
+				"type":  call.Type,
+				"function": map[string]any{
+					"name":      call.Function.Name,
+					"arguments": call.Function.Arguments,
+				},
+			})
+		}
+		writeSSEChunk(w, flusher, map[string]any{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   modelID,
+			"choices": []map[string]any{{
+				"index":         0,
+				"delta":         map[string]any{"tool_calls": chunkCalls},
+				"finish_reason": nil,
+			}},
+		})
+	} else if content, ok := message["content"].(string); ok && content != "" {
+		writeSSEChunk(w, flusher, map[string]any{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   modelID,
+			"choices": []map[string]any{{
+				"index":         0,
+				"delta":         map[string]any{"content": content},
+				"finish_reason": nil,
+			}},
+		})
+	}
+	writeSSEChunk(w, flusher, map[string]any{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   modelID,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         map[string]any{},
+			"finish_reason": finishReason,
+		}},
+	})
+	if usage, ok := response["usage"].(map[string]int); ok && len(usage) > 0 {
+		writeSSEChunk(w, flusher, map[string]any{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   modelID,
+			"choices": []map[string]any{},
+			"usage":   usage,
+		})
+	}
+	_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+func writeSSEChunk(w io.Writer, flusher http.Flusher, value map[string]any) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+	if flusher != nil {
+		flusher.Flush()
 	}
 }
 
@@ -555,7 +670,6 @@ func (s *Server) decodeRequest(w http.ResponseWriter, r *http.Request, dst any) 
 	r.Body = http.MaxBytesReader(w, r.Body, s.opts.MaxBodyBytes)
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
 		status := http.StatusBadRequest
 		code := "invalid_json"
