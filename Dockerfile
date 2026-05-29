@@ -31,11 +31,15 @@ WORKDIR /app
 
 COPY --from=build /out/aletheia /app/aletheia
 COPY --from=build /out/checkpoints /app/checkpoints
+# Bundle the verified, type-checked coding knowledge corpus so coding questions
+# are answered from curated examples instead of always learning from the web.
+COPY --from=build /src/knowledge /app/knowledge
 
 ENV ALETHEIA_ADDR=:8080
 ENV ALETHEIA_CHECKPOINTS_DIR=/app/checkpoints
 ENV ALETHEIA_MODEL=aletheia-mikros
 ENV ALETHEIA_ROUTER_CHECKPOINT=/app/checkpoints/router-mikros
+ENV ALETHEIA_KNOWLEDGE=/app/knowledge
 
 EXPOSE 8080
 ENTRYPOINT ["/app/aletheia", "serve"]

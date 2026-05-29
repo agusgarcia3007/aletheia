@@ -1195,6 +1195,11 @@ func cleanPublicResearchText(query string, text string) string {
 	if best == "" {
 		best = text
 	}
+	// If after cleaning the text is still page chrome, reject it so the caller
+	// uses a better source or abstains rather than serving navigation noise.
+	if containsChrome(best) {
+		return ""
+	}
 	best = trimBeforePublicCoreTerm(query, best)
 	if len([]rune(best)) > 420 {
 		runes := []rune(best)
@@ -1249,6 +1254,17 @@ func stripEvidenceLines(text string) string {
 	return strings.Join(lines, " ")
 }
 
+// chromeMarkers are navigation/promo/interstitial phrases that web extraction
+// drags in. A segment containing one is page chrome, not an answer.
+var chromeMarkers = []string{
+	"tambien te puede interesar", "también te puede interesar", "te puede interesar",
+	"ofrecemos servicios", "servicios profesionales de desarrollo", "lee tambien", "leé también",
+	"contenido relacionado", "articulos relacionados", "artículos relacionados",
+	"compartir en", "copiar url", "copiar enlace", "suscribete", "suscríbete", "newsletter",
+	"just a moment", "habilita javascript", "enable javascript", "aceptar cookies", "politica de cookies",
+	"lo ultimo", "lo último",
+}
+
 func stripPageChrome(text string) string {
 	replacements := []string{
 		"WhatsApp", "Twitter", "Facebook", "Linkedin", "LinkedIn", "Telegram",
@@ -1257,7 +1273,41 @@ func stripPageChrome(text string) string {
 	for _, value := range replacements {
 		text = strings.ReplaceAll(text, value, " ")
 	}
+	// Drop segments (split on sentence and ":" boundaries) that are page chrome.
+	segments := regexp.MustCompile(`[.!?:]\s+`).Split(text, -1)
+	kept := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		if containsChrome(seg) {
+			continue
+		}
+		kept = append(kept, seg)
+	}
+	text = strings.Join(kept, ". ")
+	// Remove non-text symbols/emoji that survive extraction.
+	text = stripSymbols(text)
 	return strings.Join(strings.Fields(text), " ")
+}
+
+func containsChrome(text string) bool {
+	lower := normalizeBasicChat(text)
+	for _, m := range chromeMarkers {
+		if strings.Contains(lower, normalizeBasicChat(m)) {
+			return true
+		}
+	}
+	return false
+}
+
+func stripSymbols(text string) string {
+	var b strings.Builder
+	for _, r := range text {
+		if r > 0x2190 { // arrows, emoji, pictographs and beyond
+			b.WriteByte(' ')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func splitPublicSentences(text string) []string {
@@ -1329,8 +1379,10 @@ func isQuestionTitle(text string) bool {
 
 func publicWebSourceAllowed(source memory.WebSource) bool {
 	title := strings.ToLower(strings.TrimSpace(source.Title))
-	if title == "blocked" || strings.Contains(title, "blocked") {
-		return false
+	for _, bad := range []string{"blocked", "just a moment", "attention required", "access denied", "are you a robot", "enable javascript", "verifying you are human"} {
+		if strings.Contains(title, bad) {
+			return false
+		}
 	}
 	raw := source.FinalURL
 	if raw == "" {
