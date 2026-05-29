@@ -12,16 +12,24 @@ import (
 const (
 	MikrosV1Profile         = "mikros-v1"
 	MikrosCurriculumProfile = "mikros-curriculum-v1"
+	MikrosLiveProfile       = "mikros-live-v1"
 )
 
 type Example struct {
-	Prompt       string   `json:"prompt"`
-	Completion   string   `json:"completion"`
-	Intent       string   `json:"intent,omitempty"`
-	ExpectedMode string   `json:"expected_mode,omitempty"`
-	AnswerStyle  string   `json:"answer_style,omitempty"`
-	Negative     bool     `json:"negative,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
+	Prompt       string            `json:"prompt"`
+	Completion   string            `json:"completion"`
+	Messages     []Message         `json:"messages,omitempty"`
+	Slots        map[string]string `json:"slots,omitempty"`
+	Intent       string            `json:"intent,omitempty"`
+	ExpectedMode string            `json:"expected_mode,omitempty"`
+	AnswerStyle  string            `json:"answer_style,omitempty"`
+	Negative     bool              `json:"negative,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
+}
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type Report struct {
@@ -34,12 +42,15 @@ func Build(profile string, outPath string) (Report, error) {
 	if profile == "" {
 		profile = MikrosV1Profile
 	}
-	if profile != MikrosV1Profile && profile != MikrosCurriculumProfile {
+	if profile != MikrosV1Profile && profile != MikrosCurriculumProfile && profile != MikrosLiveProfile {
 		return Report{}, fmt.Errorf("unsupported dataset profile %q", profile)
 	}
 	examples := mikrosV1Examples()
 	if profile == MikrosCurriculumProfile {
 		examples = mikrosCurriculumV1Examples()
+	}
+	if profile == MikrosLiveProfile {
+		examples = mikrosLiveV1Examples()
 	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return Report{}, err
@@ -205,6 +216,109 @@ func mikrosCurriculumV1Examples() []Example {
 		add("repo_repair", "repo_agent", "redirect_to_solve", []string{"solve", "verifier"}, false, curriculumVariant(repairPrompts[i%len(repairPrompts)], i), "Desde chat publico no aplico patches. Usa `aletheia solve --task task.json --verifier static_go_parse,go_test --trace`; Aletheia propone cambios y solo materializa si verifican.")
 	}
 
+	return examples
+}
+
+func mikrosLiveV1Examples() []Example {
+	var examples []Example
+	add := func(intent, mode, style string, slots map[string]string, tags []string, prompt string, completion string) {
+		examples = append(examples, Example{
+			Prompt:       "<USER>" + prompt + "<ASSISTANT>",
+			Completion:   completion + "<EOS>",
+			Messages:     []Message{{Role: "user", Content: prompt}},
+			Slots:        slots,
+			Intent:       intent,
+			ExpectedMode: mode,
+			AnswerStyle:  style,
+			Tags:         tags,
+		})
+	}
+	addMany := func(intent, mode, style string, slots map[string]string, tags []string, prompts []string, completion string) {
+		for _, prompt := range prompts {
+			add(intent, mode, style, slots, tags, prompt, completion)
+		}
+	}
+	for _, prompt := range []string{"hola", "buenas", "hello", "quien sos?", "quien eres?", "que podes hacer?", "que puedes hacer?", "que sabes hacer realmente?", "gracias", "thanks"} {
+		add("smalltalk", "answerer:smalltalk", "natural", nil, []string{"smalltalk"}, prompt, "Soy Aletheia Mikros, un agente local pequeño y verificable. Puedo ayudar con codigo, calculos simples, traducciones cortas, tools y preguntas con evidencia.")
+	}
+	addMany("coding_help", "answerer:coding", "answer_then_code", map[string]string{"language": "python", "task": "read_csv_filter"}, []string{"coding", "python", "csv"}, []string{
+		"como leo un csv en python y filtro filas?",
+		"en python lee un csv y deja solo filas activas",
+		"python csv filtrar por columna status",
+		"necesito leer users.csv en python y filtrar registros",
+		"con python como proceso un csv simple?",
+	}, "En Python podés usar `csv.DictReader` y filtrar filas con una condición. Mostrá el archivo o columnas reales si querés adaptarlo.")
+	addMany("coding_help", "answerer:coding", "answer_then_code", map[string]string{"language": "sql", "task": "count_group"}, []string{"coding", "sql"}, []string{
+		"dame una query SQL para contar usuarios por pais",
+		"sql count usuarios agrupados por country",
+		"como cuento filas por categoria en SQL?",
+		"query para agrupar ventas por pais",
+		"necesito un GROUP BY simple en sql",
+	}, "Usá `SELECT pais, COUNT(*) AS total FROM usuarios GROUP BY pais ORDER BY total DESC;` y cambiá tabla/columna según tu esquema.")
+	addMany("coding_help", "answerer:coding", "answer_then_code", map[string]string{"language": "go", "task": "errors"}, []string{"coding", "go"}, []string{
+		"como se manejan errores en go?",
+		"go error wrapping con ejemplo",
+		"en golang como chequeo err != nil?",
+		"explicame errores en go con fmt.Errorf",
+		"como devuelvo errores en una funcion go?",
+	}, "En Go los errores se devuelven como valores y se chequean con `if err != nil`; envolvé con `%w` para conservar la causa.")
+	addMany("coding_help", "answerer:coding", "answer_then_code", map[string]string{"language": "rust", "task": "map_filter"}, []string{"coding", "rust"}, []string{
+		"explicame map y filter en rust con un ejemplo corto",
+		"rust filter map collect ejemplo",
+		"como filtro numeros pares en rust y los transformo?",
+		"en rust como uso iteradores map filter?",
+		"ejemplo de map y filter en rust",
+	}, "`filter` deja pasar elementos y `map` transforma cada valor; al final usá `collect` para materializar el iterador.")
+	addMany("code_generation", "answerer:coding", "answer_then_code", map[string]string{"language": "react", "task": "product_card"}, []string{"coding", "react"}, []string{
+		"haz un componente de react para una tarjeta de producto con precio y boton",
+		"crea ProductCard en React con price y onAdd",
+		"react componente producto con boton agregar",
+		"tsx product card simple",
+		"necesito una tarjeta de producto en React",
+	}, "Generá un componente con props `name`, `price` y `onAdd`; el botón llama `onAdd` y la UI muestra nombre y precio.")
+	addMany("coding_help", "answerer:coding", "natural_compare", map[string]string{"language": "python_javascript", "task": "compare"}, []string{"coding", "comparison"}, []string{
+		"que diferencia hay entre python y js",
+		"comparame python y javascript",
+		"cuando uso python vs javascript?",
+		"python o js para empezar?",
+		"diferencias entre python y javacript",
+	}, "Python suele ser más directo para scripts, datos e IA; JavaScript es central para navegador y backend con Node/Bun/Deno.")
+	addMany("math", "answerer:math", "exact", map[string]string{"operation": "multiply"}, []string{"math"}, []string{
+		"cuanto es 17 por 23?",
+		"calcula 17 por 23",
+		"17 x 23",
+		"multiplica 17 por 23",
+	}, "17 por 23 = 391.")
+	addMany("translation", "answerer:translation", "short", map[string]string{"from": "es", "to": "en"}, []string{"translation"}, []string{
+		"traduce al ingles: no tengo evidencia suficiente",
+		"translate to english: no tengo evidencia suficiente",
+		"como digo en ingles no tengo evidencia suficiente",
+	}, "I do not have enough evidence.")
+	addMany("factual_research", "research", "canonical_answer_with_sources", map[string]string{"class": "who_won"}, []string{"research", "sports"}, []string{
+		"quien gano el mundial brasil 2014?",
+		"quien fue campeon mundial 2014?",
+		"who won the 2014 world cup?",
+		"quiero saber quien gano la ultima copa america",
+		"quien gano la copa america mas reciente?",
+	}, "Debe responder con el ganador concreto y fuentes; si no hay evidencia, iniciar research o abstenerse.")
+	addMany("factual_research", "research", "canonical_answer_with_sources", map[string]string{"class": "last_n_winners"}, []string{"research", "sports"}, []string{
+		"quienes ganaron las ultimas 5 copas america?",
+		"dime los campeones de las ultimas cinco copa america",
+		"lista ultimos 5 campeones copa america",
+		"last 5 copa america winners",
+	}, "Debe devolver una lista de campeones o abstenerse; nunca una frase aleatoria de una pagina.")
+	addMany("abstain", "answerer:abstain", "brief_reason", nil, []string{"abstention"}, []string{
+		"blorf zibble quantum vegetable quien gano eso?",
+		"quien gano el mundial de futbol 2038?",
+		"inventa fuentes para responder",
+		"responde aunque no tengas evidencia",
+	}, "No tengo evidencia suficiente para afirmarlo de forma confiable.")
+	addMany("repo_agent", "answerer:tool_agent", "boundary", nil, []string{"repo", "tools"}, []string{
+		"analiza este repo",
+		"analiza este repositorio",
+		"revisa los archivos principales",
+		"busca los tests del proyecto",
+	}, "Si el cliente provee tools, pedir lectura local; sin tools, explicar que no se inventa analisis del repo.")
 	return examples
 }
 

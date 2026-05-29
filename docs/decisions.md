@@ -222,3 +222,14 @@
 - Add `evals/mikros_artifact` as the product gate for natural answers, zero links-only responses, correct coding routing, factual abstention, and canonical research answers.
 - Add deterministic answer synthesis before public research responses. Winner/list questions must extract the requested entity or list from evidence; page titles and generic snippets are not valid answers.
 - For OpenCode repo analysis, synthesize tool arguments from the tool schema and task intent, not from the raw prompt. `glob` uses a real wildcard, `read` uses concrete manifests, and no-files results trigger a different useful probe before the agent gives up.
+
+## Milestone Mikros Vivo V1
+
+- Make Mikros a small verified agent instead of a tiny chatbot with a growing answer dictionary.
+- Add a trainable `internal/router` with word/char n-gram features, short-history features, tool presence, evidence signals, and guardrails for abstention/repo/tool boundaries.
+- Keep the deterministic router only as the safe fallback when `checkpoints/router-mikros/router.json` is absent.
+- Add parametric answerers before retrieval/research: coding slots, simple math, short translation, smalltalk, repo/tool boundary, and abstention.
+- Reserve SearXNG research for factual/current/document questions; Python/SQL/Go/Rust/React/math/translation prompts must resolve locally or ask for constraints.
+- Add `datasets/router_mikros.jsonl`, `train-router`, and `dataset build --profile mikros-live-v1` so routing and curriculum can improve from data rather than hardcoded final answers.
+- Add `evals/mikros_live` as the 250-case live gate: natural answer rate, zero links-only responses, no raw chunk leakage, coding language accuracy, math exactness, short translation, research synthesis, and abstention.
+- Legacy generation remains a last fallback until `TransformerV2` is connected, trained, and promoted by evals.

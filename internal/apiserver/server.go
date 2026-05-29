@@ -7,15 +7,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"aletheia/internal/answerer"
 	"aletheia/internal/memory"
 	"aletheia/internal/research"
 	"aletheia/internal/retriever"
+	"aletheia/internal/router"
 	"aletheia/internal/runner"
 	"aletheia/internal/tokenizer"
 )
@@ -28,15 +32,17 @@ const (
 )
 
 type Options struct {
-	Addr           string
-	Checkpoint     string
-	CheckpointsDir string
-	ModelName      string
-	APIKey         string
-	Auth           string
-	MaxBodyBytes   int64
-	Store          *memory.Store
-	Research       research.Options
+	Addr             string
+	Checkpoint       string
+	CheckpointsDir   string
+	ModelName        string
+	APIKey           string
+	Auth             string
+	MaxBodyBytes     int64
+	Store            *memory.Store
+	Research         research.Options
+	RouterCheckpoint string
+	Router           router.Router
 }
 
 type Server struct {
@@ -47,6 +53,8 @@ type Server struct {
 	tokenizer    *tokenizer.Tokenizer
 	store        *memory.Store
 	research     research.Options
+	chatRouter   router.Router
+	answerers    answerer.Composite
 	created      int64
 	nextID       atomic.Uint64
 	requests     atomic.Uint64
@@ -67,6 +75,10 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	chatRouter, err := loadChatRouter(opts)
+	if err != nil {
+		return nil, err
+	}
 	opts.ModelName = defaultModel
 	return &Server{
 		opts:         opts,
@@ -76,8 +88,34 @@ func New(opts Options) (*Server, error) {
 		tokenizer:    tok,
 		store:        opts.Store,
 		research:     opts.Research,
+		chatRouter:   chatRouter,
+		answerers:    answerer.Default(),
 		created:      time.Now().Unix(),
 	}, nil
+}
+
+func loadChatRouter(opts Options) (router.Router, error) {
+	if opts.Router != nil {
+		return opts.Router, nil
+	}
+	checkpoint := strings.TrimSpace(opts.RouterCheckpoint)
+	if checkpoint == "" {
+		checkpoint = os.Getenv("ALETHEIA_ROUTER_CHECKPOINT")
+	}
+	if checkpoint == "" {
+		checkpoint = filepath.Join("checkpoints", "router-mikros")
+	}
+	if _, err := os.Stat(filepath.Join(checkpoint, "router.json")); err != nil {
+		if os.IsNotExist(err) {
+			return router.NewFallback(), nil
+		}
+		return nil, err
+	}
+	loaded, err := router.LoadLinear(checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("load router checkpoint %s: %w", checkpoint, err)
+	}
+	return loaded, nil
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
@@ -151,7 +189,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"status":             "ok",
 		"model_loaded":       true,
 		"model":              s.defaultModel,
-		"models":             s.modelOrder,
+		"models":             s.publicModelOrder(),
+		"models_loaded":      len(s.models),
 		"context_length":     s.defaultContextLength(),
 		"max_output_tokens":  DefaultMaxOutputTokens,
 		"supports_tools":     true,
@@ -261,6 +300,20 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
+	query := strings.TrimSpace(effectiveUserQuery(req.Messages))
+	decision := s.routeChat(query, req.Messages, req.Tools)
+	if local, ok, err := s.answerers.Answer(r.Context(), answerer.Request{
+		Query:    query,
+		Messages: toRouterMessages(req.Messages),
+		Intent:   decision.Intent,
+		HasTools: len(req.Tools) > 0,
+	}); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "server_error", "", "answerer_failed", err.Error())
+		return
+	} else if ok {
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), local.Content, s.textUsage(prompt, local.Content)))
+		return
+	}
 	if reply, ok := policyReply(served.ID, req.Messages); ok {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
@@ -269,7 +322,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
-	query := strings.TrimSpace(effectiveUserQuery(req.Messages))
 	if query != "" && isChatActionRequest(query) {
 		generated, usage, err := s.generate(served, prompt, generationOptions{
 			MaxTokens:   maxTokens,
@@ -310,7 +362,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
-	if query != "" && !isResearchableQuestion(query) {
+	if query != "" && !isResearchableQuestion(query) && !isResearchIntent(decision.Intent) {
 		if reply, ok := trainedExampleReply(served, req.Messages); ok {
 			respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 			return
@@ -348,7 +400,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if query != "" && isFactualKnowledgeQuestion(query) {
+	if query != "" && (isFactualKnowledgeQuestion(query) || isResearchIntent(decision.Intent)) {
 		content := "No tengo evidencia local suficiente para responder eso de forma confiable. Si habilitas research, puedo buscar fuentes y guardar la evidencia para futuras preguntas."
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
@@ -786,6 +838,29 @@ func shouldResearch(query string, mode string, opts research.Options) bool {
 		return !isCodingTask(query)
 	}
 	return opts.AutoOnKnowledgeGap && !isCodingTask(query)
+}
+
+func (s *Server) routeChat(query string, messages []chatMessage, tools []chatTool) router.RouteDecision {
+	if s.chatRouter == nil {
+		s.chatRouter = router.NewFallback()
+	}
+	return s.chatRouter.Route(router.Input{
+		Text:     query,
+		Messages: toRouterMessages(messages),
+		HasTools: len(tools) > 0,
+	})
+}
+
+func toRouterMessages(messages []chatMessage) []router.Message {
+	out := make([]router.Message, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, router.Message{Role: message.Role, Content: message.Content})
+	}
+	return out
+}
+
+func isResearchIntent(intent router.Intent) bool {
+	return intent == router.IntentFactualResearch || intent == router.IntentDocumentQA
 }
 
 func effectiveUserQuery(messages []chatMessage) string {

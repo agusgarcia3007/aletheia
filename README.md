@@ -8,14 +8,17 @@ Core commands:
 go run ./cmd/aletheia init --db data/memory.sqlite
 go run ./cmd/aletheia dataset build --profile mikros-v1 --out datasets/generated/mikros_v1.jsonl
 go run ./cmd/aletheia dataset build --profile mikros-curriculum-v1 --out datasets/generated/mikros_curriculum_v1.jsonl
+go run ./cmd/aletheia dataset build --profile mikros-live-v1 --out datasets/generated/mikros_live_v1.jsonl
 go run ./cmd/aletheia tokenizer train --dataset datasets/generated/mikros_v1.jsonl --out checkpoints/aletheia-mikros/tokenizer.json
 go run ./cmd/aletheia train --config configs/aletheia-mikros-v1.yaml --dataset datasets/generated/mikros_v1.jsonl --out checkpoints/aletheia-mikros
+go run ./cmd/aletheia train-router --dataset datasets/router_mikros.jsonl --out checkpoints/router-mikros
 go run ./cmd/aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
 go run ./cmd/aletheia solve --task examples/buggy-go/task.json --trace
 go run ./cmd/aletheia eval --suite evals/bootstrap --json
 go run ./cmd/aletheia eval --suite evals/production --json
 go run ./cmd/aletheia eval --suite evals/mikros_functional --json
 go run ./cmd/aletheia eval --suite evals/mikros_artifact --json
+go run ./cmd/aletheia eval --suite evals/mikros_live --json
 ```
 
 Useful inspection commands:
@@ -43,6 +46,7 @@ OpenAI-compatible local API:
 ALETHEIA_API_KEY=local-dev go run ./cmd/aletheia serve \
   --checkpoints-dir checkpoints \
   --model aletheia-mikros \
+  --router-checkpoint checkpoints/router-mikros \
   --addr :8080
 ```
 
@@ -84,6 +88,11 @@ one product surface. The target is a verified small agent: local memory, SearXNG
 research, coding knowledge, repair, and verifiers must beat guessing. `solve`
 keeps its verifier-first flow and does not require serving a separate planner
 checkpoint.
+
+Mikros Vivo V1 adds a trainable router and parametric answerers before retrieval:
+coding, simple math, short translation, tool-agent boundaries, and safe
+abstention are resolved locally. Research is reserved for factual/current
+questions and must synthesize a canonical answer before showing citations.
 
 Mikros must answer in natural language first. Factual/current questions never
 fall through to free generation: they use verified local/research evidence,

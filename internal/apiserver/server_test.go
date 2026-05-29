@@ -563,6 +563,55 @@ func TestCodingKnowledgePromptsStayNaturalAndOutOfResearch(t *testing.T) {
 	}
 }
 
+func TestLiveAnswererPromptsDoNotTriggerResearch(t *testing.T) {
+	store := newTestStore(t)
+	server := newMultiModelTestServer(t, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	cases := []struct {
+		message string
+		want    []string
+		forbid  []string
+	}{
+		{message: "como leo un csv en python y filtro filas?", want: []string{"csv.DictReader", "status"}, forbid: []string{"job_id=", "Fuentes:"}},
+		{message: "dame una query SQL para contar usuarios por pais", want: []string{"GROUP BY pais", "COUNT(*)"}, forbid: []string{"job_id=", "Fuentes:"}},
+		{message: "como se manejan errores en go?", want: []string{"err != nil", "%w"}, forbid: []string{"job_id=", "Fuentes:"}},
+		{message: "explicame map y filter en rust con un ejemplo corto", want: []string{"filter", "map", "collect"}, forbid: []string{"job_id=", "Fuentes:"}},
+		{message: "haz un componente de react para una tarjeta de producto con precio y boton", want: []string{"ProductCard", "price", "onAdd"}, forbid: []string{"job_id=", "Fuentes:"}},
+		{message: "cuanto es 17 por 23?", want: []string{"391"}, forbid: []string{"job_id=", "Fuentes:"}},
+		{message: "traduce al ingles: no tengo evidencia suficiente", want: []string{"I do not have enough evidence."}, forbid: []string{"job_id=", "Fuentes:"}},
+	}
+	for _, tt := range cases {
+		rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"`+tt.message+`"}]}`, "secret")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("message %q status = %d body=%s", tt.message, rec.Code, rec.Body.String())
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(rec.Body.String(), want) {
+				t.Fatalf("message %q missing %q body=%s", tt.message, want, rec.Body.String())
+			}
+		}
+		for _, forbid := range tt.forbid {
+			if strings.Contains(rec.Body.String(), forbid) {
+				t.Fatalf("message %q contains %q body=%s", tt.message, forbid, rec.Body.String())
+			}
+		}
+	}
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
 func TestChatUsesTrainedExamplesForActionRequests(t *testing.T) {
 	store := newTestStore(t)
 	if _, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{

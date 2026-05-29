@@ -22,6 +22,7 @@ import (
 	"aletheia/internal/model"
 	"aletheia/internal/research"
 	"aletheia/internal/retriever"
+	"aletheia/internal/router"
 	"aletheia/internal/runner"
 	"aletheia/internal/selector"
 	"aletheia/internal/tokenizer"
@@ -58,6 +59,8 @@ func run(args []string) error {
 		return runTokenizer(args[2:])
 	case "train-selector":
 		return runTrainSelector(args[2:])
+	case "train-router":
+		return runTrainRouter(args[2:])
 	case "run":
 		return runModel(args[2:])
 	case "index":
@@ -97,8 +100,10 @@ Usage:
   aletheia train --config configs/aletheia-mikros.yaml --dataset datasets/aletheia_mikros.jsonl --out checkpoints/aletheia-mikros
   aletheia dataset build --profile mikros-v1 --out datasets/generated/mikros_v1.jsonl
   aletheia dataset build --profile mikros-curriculum-v1 --out datasets/generated/mikros_curriculum_v1.jsonl
+  aletheia dataset build --profile mikros-live-v1 --out datasets/generated/mikros_live_v1.jsonl
   aletheia tokenizer train --dataset datasets/generated/mikros_v1.jsonl --out checkpoints/aletheia-mikros/tokenizer.json
   aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
+  aletheia train-router --dataset datasets/router_mikros.jsonl --out checkpoints/router-mikros
   aletheia run --checkpoint checkpoints/aletheia-mikros --prompt "<USER>hola como estas?<ASSISTANT>"
   aletheia index ./docs [--config configs/micro.yaml] [--db %s]
   aletheia ask --query "qué decisión tomamos sobre el selector?" [--config configs/micro.yaml] [--db %s]
@@ -111,7 +116,7 @@ Usage:
   aletheia research --query "what is MCP in agents?" [--db %s] [--background]
   aletheia research-status --job research_id [--db %s]
   aletheia jobs [--db %s]
-  aletheia serve [--addr :8080] [--checkpoints-dir checkpoints] [--checkpoint checkpoints/aletheia-mikros] [--model aletheia-mikros] [--api-key $ALETHEIA_API_KEY]
+  aletheia serve [--addr :8080] [--checkpoints-dir checkpoints] [--checkpoint checkpoints/aletheia-mikros] [--model aletheia-mikros] [--router-checkpoint checkpoints/router-mikros] [--api-key $ALETHEIA_API_KEY]
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 }
 
@@ -316,6 +321,41 @@ func runTrainSelector(args []string) error {
 	}
 	fmt.Printf("selector_checkpoint: %s\n", *outDir)
 	fmt.Printf("epochs: %d\n", report.Epochs)
+	fmt.Printf("initial_loss: %.6f\n", report.InitialLoss)
+	fmt.Printf("final_loss: %.6f\n", report.FinalLoss)
+	fmt.Printf("initial_accuracy: %.4f\n", report.InitialAccuracy)
+	fmt.Printf("final_accuracy: %.4f\n", report.FinalAccuracy)
+	return nil
+}
+
+func runTrainRouter(args []string) error {
+	fs := flag.NewFlagSet("train-router", flag.ContinueOnError)
+	datasetPath := fs.String("dataset", "datasets/router_mikros.jsonl", "router JSONL training dataset")
+	outDir := fs.String("out", "checkpoints/router-mikros", "router checkpoint output directory")
+	epochs := fs.Int("epochs", 80, "training epochs")
+	learningRate := fs.Float64("learning-rate", 0.2, "learning rate")
+	minConfidence := fs.Float64("min-confidence", 0.35, "minimum confidence before fallback routing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	examples, err := router.LoadTrainingExamples(*datasetPath)
+	if err != nil {
+		return err
+	}
+	model, report, err := router.TrainLinear(examples, router.TrainOptions{
+		Epochs:        *epochs,
+		LearningRate:  *learningRate,
+		MinConfidence: *minConfidence,
+	})
+	if err != nil {
+		return err
+	}
+	if err := model.Save(*outDir); err != nil {
+		return err
+	}
+	fmt.Printf("router_checkpoint: %s\n", *outDir)
+	fmt.Printf("epochs: %d\n", report.Epochs)
+	fmt.Printf("examples: %d\n", report.Examples)
 	fmt.Printf("initial_loss: %.6f\n", report.InitialLoss)
 	fmt.Printf("final_loss: %.6f\n", report.FinalLoss)
 	fmt.Printf("initial_accuracy: %.4f\n", report.InitialAccuracy)
@@ -911,6 +951,7 @@ func runServe(args []string) error {
 	checkpoint := fs.String("checkpoint", envDefault("ALETHEIA_CHECKPOINT", apiserver.DefaultCheckpoint), "model checkpoint directory")
 	checkpointsDir := fs.String("checkpoints-dir", os.Getenv("ALETHEIA_CHECKPOINTS_DIR"), "directory containing model checkpoint subdirectories")
 	modelName := fs.String("model", os.Getenv("ALETHEIA_MODEL"), "served OpenAI-compatible model name")
+	routerCheckpoint := fs.String("router-checkpoint", envDefault("ALETHEIA_ROUTER_CHECKPOINT", "checkpoints/router-mikros"), "optional Mikros router checkpoint directory")
 	apiKey := fs.String("api-key", os.Getenv("ALETHEIA_API_KEY"), "Bearer API key for /v1/* endpoints")
 	auth := fs.String("auth", envDefault("ALETHEIA_AUTH", "bearer"), "authentication mode: bearer or none")
 	maxBodyBytes := fs.Int64("max-body-bytes", apiserver.DefaultMaxBodyBytes, "maximum JSON request body size")
@@ -933,15 +974,16 @@ func runServe(args []string) error {
 		return err
 	}
 	server, err := apiserver.New(apiserver.Options{
-		Addr:           *addr,
-		Checkpoint:     *checkpoint,
-		CheckpointsDir: *checkpointsDir,
-		ModelName:      *modelName,
-		APIKey:         *apiKey,
-		Auth:           *auth,
-		MaxBodyBytes:   *maxBodyBytes,
-		Store:          store,
-		Research:       researchOptionsFromConfig(cfg),
+		Addr:             *addr,
+		Checkpoint:       *checkpoint,
+		CheckpointsDir:   *checkpointsDir,
+		ModelName:        *modelName,
+		APIKey:           *apiKey,
+		Auth:             *auth,
+		MaxBodyBytes:     *maxBodyBytes,
+		Store:            store,
+		Research:         researchOptionsFromConfig(cfg),
+		RouterCheckpoint: *routerCheckpoint,
 	})
 	if err != nil {
 		return err

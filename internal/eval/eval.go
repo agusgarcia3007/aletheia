@@ -92,6 +92,9 @@ func Run(ctx context.Context, path string) (BootstrapReport, error) {
 	if filepath.Base(info.Path) == "mikros_artifact" {
 		return RunMikrosArtifact(ctx, path)
 	}
+	if filepath.Base(info.Path) == "mikros_live" {
+		return RunMikrosLive(ctx, path)
+	}
 	return RunBootstrap(ctx, path)
 }
 

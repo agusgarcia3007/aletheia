@@ -262,6 +262,50 @@ func TestRunDatasetBuildAndTokenizerTrain(t *testing.T) {
 		}
 		t.Fatalf("curriculum missing metadata:\n%s", sample)
 	}
+
+	livePath := filepath.Join(root, "mikros_live.jsonl")
+	out, err = captureStdout(t, func() error {
+		return run([]string{"aletheia", "dataset", "build", "--profile", "mikros-live-v1", "--out", livePath})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "profile: mikros-live-v1") {
+		t.Fatalf("live output:\n%s", out)
+	}
+	liveRaw, err := os.ReadFile(livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(liveRaw), `"expected_mode":"answerer:coding"`) || strings.Contains(string(liveRaw), "[curriculum-") {
+		t.Fatalf("live dataset metadata:\n%s", liveRaw)
+	}
+}
+
+func TestRunTrainRouterWritesCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	dataset := filepath.Join(root, "router.jsonl")
+	writeCLIFile(t, dataset, strings.Join([]string{
+		`{"text":"hola","intent":"smalltalk"}`,
+		`{"text":"como leo un csv en python","intent":"coding_help"}`,
+		`{"text":"cuanto es 17 por 23","intent":"math"}`,
+		`{"text":"traduce al ingles: no tengo evidencia suficiente","intent":"translation"}`,
+		`{"text":"quien gano el mundial brasil 2014","intent":"factual_research"}`,
+		`{"text":"blorf zibble quantum vegetable","intent":"abstain"}`,
+	}, "\n")+"\n")
+	outDir := filepath.Join(root, "router")
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "train-router", "--dataset", dataset, "--out", outDir, "--epochs", "80", "--learning-rate", "0.12"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "router_checkpoint:") || !strings.Contains(out, "final_accuracy:") {
+		t.Fatalf("train-router output:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "router.json")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRunResearchBackgroundAndStatus(t *testing.T) {

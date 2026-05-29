@@ -1,0 +1,32 @@
+{"text":"hola","intent":"smalltalk"}
+{"text":"quien sos?","intent":"smalltalk"}
+{"text":"que sabes hacer realmente?","intent":"smalltalk"}
+{"text":"gracias","intent":"smalltalk"}
+{"text":"como leo un csv en python y filtro filas?","intent":"coding_help"}
+{"text":"dame una query SQL para contar usuarios por pais","intent":"coding_help"}
+{"text":"como se manejan errores en go?","intent":"coding_help"}
+{"text":"explicame map y filter en rust con un ejemplo corto","intent":"coding_help"}
+{"text":"como hago una funcion en javacript?","intent":"coding_help"}
+{"text":"que diferencia hay entre python y javascript?","intent":"coding_help"}
+{"text":"haz un componente de react para una tarjeta de producto con precio y boton","intent":"code_generation"}
+{"text":"crea una funcion en typescript que sume dos numeros","intent":"code_generation"}
+{"text":"analiza este repo","intent":"tool_call","has_tools":true}
+{"text":"analiza este repositorio","intent":"tool_call","has_tools":true}
+{"text":"analiza este repo","intent":"repo_agent"}
+{"text":"arregla este repo","intent":"repo_agent"}
+{"text":"go test falla aplica un patch","intent":"repo_agent"}
+{"text":"cuanto es 17 por 23?","intent":"math"}
+{"text":"calcula 40 mas 2","intent":"math"}
+{"text":"10 dividido 4","intent":"math"}
+{"text":"traduce al ingles: no tengo evidencia suficiente","intent":"translation"}
+{"text":"translate to spanish: thank you","intent":"translation"}
+{"text":"quien gano el mundial brasil 2014?","intent":"factual_research"}
+{"text":"quiero saber quien gano la ultima copa america","intent":"factual_research"}
+{"text":"quienes ganaron las ultimas 5 copas america?","intent":"factual_research"}
+{"text":"que fue la guerra de vietnam?","intent":"factual_research"}
+{"text":"what is MCP in agents?","intent":"factual_research"}
+{"text":"segun mis documentos que decision tomamos?","intent":"document_qa","has_local_evidence":true}
+{"text":"en los docs locales donde esta la config?","intent":"document_qa","has_local_evidence":true}
+{"text":"quien gano la copa mundial de futbol 2038?","intent":"abstain"}
+{"text":"blorf zibble quantum vegetable quien gano eso?","intent":"abstain"}
+{"text":"inventa fuentes para responder","intent":"abstain"}

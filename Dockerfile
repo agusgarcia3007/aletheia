@@ -22,6 +22,9 @@ RUN /out/aletheia train \
     --dataset datasets/aletheia_hephaestus.jsonl \
     --out /out/checkpoints/aletheia-hephaestus \
     --steps ${ALETHEIA_TRAIN_STEPS}
+RUN /out/aletheia train-router \
+    --dataset datasets/router_mikros.jsonl \
+    --out /out/checkpoints/router-mikros
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
@@ -32,6 +35,7 @@ COPY --from=build /out/checkpoints /app/checkpoints
 ENV ALETHEIA_ADDR=:8080
 ENV ALETHEIA_CHECKPOINTS_DIR=/app/checkpoints
 ENV ALETHEIA_MODEL=aletheia-mikros
+ENV ALETHEIA_ROUTER_CHECKPOINT=/app/checkpoints/router-mikros
 
 EXPOSE 8080
 ENTRYPOINT ["/app/aletheia", "serve"]
