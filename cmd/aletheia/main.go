@@ -15,6 +15,7 @@ import (
 	"aletheia/internal/apiserver"
 	"aletheia/internal/cognitivevm"
 	"aletheia/internal/config"
+	"aletheia/internal/datasetbuilder"
 	"aletheia/internal/eval"
 	"aletheia/internal/learning"
 	"aletheia/internal/memory"
@@ -51,6 +52,10 @@ func run(args []string) error {
 		return runInit(args[2:])
 	case "train":
 		return runTrain(args[2:])
+	case "dataset":
+		return runDataset(args[2:])
+	case "tokenizer":
+		return runTokenizer(args[2:])
 	case "train-selector":
 		return runTrainSelector(args[2:])
 	case "run":
@@ -90,6 +95,8 @@ Usage:
   aletheia init [--config configs/micro.yaml] [--db %s]
   aletheia config inspect --config configs/micro.yaml
   aletheia train --config configs/aletheia-mikros.yaml --dataset datasets/aletheia_mikros.jsonl --out checkpoints/aletheia-mikros
+  aletheia dataset build --profile mikros-v1 --out datasets/generated/mikros_v1.jsonl
+  aletheia tokenizer train --dataset datasets/generated/mikros_v1.jsonl --out checkpoints/aletheia-mikros/tokenizer.json
   aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
   aletheia run --checkpoint checkpoints/aletheia-mikros --prompt "<USER>hola como estas?<ASSISTANT>"
   aletheia index ./docs [--config configs/micro.yaml] [--db %s]
@@ -219,6 +226,65 @@ func runTrain(args []string) error {
 	fmt.Printf("final_loss: %.6f\n", report.FinalLoss)
 	fmt.Printf("initial_accuracy: %.4f\n", report.InitialAccuracy)
 	fmt.Printf("final_accuracy: %.4f\n", report.FinalAccuracy)
+	return nil
+}
+
+func runDataset(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("dataset requires a subcommand")
+	}
+	switch args[0] {
+	case "build":
+		return runDatasetBuild(args[1:])
+	default:
+		return fmt.Errorf("unknown dataset subcommand %q", args[0])
+	}
+}
+
+func runDatasetBuild(args []string) error {
+	fs := flag.NewFlagSet("dataset build", flag.ContinueOnError)
+	profile := fs.String("profile", datasetbuilder.MikrosV1Profile, "dataset profile")
+	out := fs.String("out", "datasets/generated/mikros_v1.jsonl", "output JSONL path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	report, err := datasetbuilder.Build(*profile, *out)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("dataset: %s\n", report.OutPath)
+	fmt.Printf("profile: %s\n", report.Profile)
+	fmt.Printf("examples: %d\n", report.Examples)
+	return nil
+}
+
+func runTokenizer(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("tokenizer requires a subcommand")
+	}
+	switch args[0] {
+	case "train":
+		return runTokenizerTrain(args[1:])
+	default:
+		return fmt.Errorf("unknown tokenizer subcommand %q", args[0])
+	}
+}
+
+func runTokenizerTrain(args []string) error {
+	fs := flag.NewFlagSet("tokenizer train", flag.ContinueOnError)
+	datasetPath := fs.String("dataset", "datasets/generated/mikros_v1.jsonl", "dataset JSONL path")
+	out := fs.String("out", "checkpoints/aletheia-mikros/tokenizer.json", "tokenizer artifact path")
+	vocabSize := fs.Int("vocab-size", 8192, "target tokenizer vocabulary size")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	artifact, err := tokenizer.TrainBPEFromJSONL(*datasetPath, *out, *vocabSize)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("tokenizer: %s\n", *out)
+	fmt.Printf("type: %s\n", artifact.Type)
+	fmt.Printf("vocab_size: %d\n", artifact.VocabSize)
 	return nil
 }
 

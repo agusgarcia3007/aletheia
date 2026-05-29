@@ -314,6 +314,10 @@ func answerFromSources(query string, report ResearchResult) string {
 			if text == "" || strings.EqualFold(text, sourceTitle) || likelyTitle(text) {
 				continue
 			}
+			text = canonicalClaimAnswer(query, text)
+			if text == "" {
+				continue
+			}
 			score := int(overlapScore(queryTokens, keywordSet(text)) * 100)
 			if score > bestScore {
 				best = text
@@ -329,6 +333,90 @@ func answerFromSources(query string, report ResearchResult) string {
 		}
 	}
 	return fmt.Sprintf("No hay evidencia web suficiente para responder sobre %q.", query)
+}
+
+func canonicalClaimAnswer(query string, text string) string {
+	text = cleanExtractedSentence(text)
+	queryTokens := keywordSet(query)
+	best := ""
+	bestScore := 0.0
+	for _, sentence := range splitSentences(text) {
+		sentence = strings.TrimSpace(sentence)
+		if len([]rune(sentence)) < 35 || likelyTitle(sentence) {
+			continue
+		}
+		score := overlapScore(queryTokens, keywordSet(sentence))
+		if score > bestScore {
+			best = sentence
+			bestScore = score
+		}
+	}
+	if best == "" {
+		best = text
+	}
+	best = trimBeforeCoreTerm(query, best)
+	if len([]rune(best)) > 420 {
+		runes := []rune(best)
+		best = string(runes[:420])
+		if idx := strings.LastIndex(best, " "); idx > 180 {
+			best = best[:idx]
+		}
+		best += "."
+	}
+	return strings.TrimSpace(best)
+}
+
+func cleanExtractedSentence(text string) string {
+	replacements := []string{
+		"WhatsApp", "Twitter", "Facebook", "Linkedin", "LinkedIn", "Telegram",
+		"Copiar URL", "Beloud", "Lo Ultimo", "Lo Último",
+	}
+	for _, value := range replacements {
+		text = strings.ReplaceAll(text, value, " ")
+	}
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func splitSentences(text string) []string {
+	parts := regexp.MustCompile(`[.!?]\s+`).Split(text, -1)
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func trimBeforeCoreTerm(query string, text string) string {
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "whatsapp") &&
+		!strings.Contains(lower, "copiar") &&
+		!strings.Contains(lower, "fotografia") &&
+		!strings.Contains(lower, "redaccion") &&
+		!strings.Contains(lower, "publicado") &&
+		!strings.Contains(lower, "lo ultimo") {
+		return text
+	}
+	for token := range keywordSet(query) {
+		if len(token) < 4 {
+			continue
+		}
+		if idx := strings.Index(lower, token); idx > 24 && idx < len(text) {
+			best := idx
+			for other := range keywordSet(query) {
+				if len(other) < 4 {
+					continue
+				}
+				if otherIdx := strings.Index(lower, other); otherIdx > 24 && otherIdx < best {
+					best = otherIdx
+				}
+			}
+			return strings.TrimSpace(text[best:])
+		}
+	}
+	return text
 }
 
 func likelyTitle(text string) bool {

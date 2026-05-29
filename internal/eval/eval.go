@@ -86,6 +86,9 @@ func Run(ctx context.Context, path string) (BootstrapReport, error) {
 	if filepath.Base(info.Path) == "production" {
 		return RunProduction(ctx, path)
 	}
+	if filepath.Base(info.Path) == "mikros_functional" {
+		return RunMikrosFunctional(ctx, path)
+	}
 	return RunBootstrap(ctx, path)
 }
 

@@ -6,12 +6,14 @@ Core commands:
 
 ```bash
 go run ./cmd/aletheia init --db data/memory.sqlite
-go run ./cmd/aletheia train --config configs/aletheia-mikros.yaml --dataset datasets/aletheia_mikros.jsonl --out checkpoints/aletheia-mikros
-go run ./cmd/aletheia train --config configs/aletheia-hephaestus.yaml --dataset datasets/aletheia_hephaestus.jsonl --out checkpoints/aletheia-hephaestus
+go run ./cmd/aletheia dataset build --profile mikros-v1 --out datasets/generated/mikros_v1.jsonl
+go run ./cmd/aletheia tokenizer train --dataset datasets/generated/mikros_v1.jsonl --out checkpoints/aletheia-mikros/tokenizer.json
+go run ./cmd/aletheia train --config configs/aletheia-mikros-v1.yaml --dataset datasets/generated/mikros_v1.jsonl --out checkpoints/aletheia-mikros
 go run ./cmd/aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
 go run ./cmd/aletheia solve --task examples/buggy-go/task.json --trace
 go run ./cmd/aletheia eval --suite evals/bootstrap --json
 go run ./cmd/aletheia eval --suite evals/production --json
+go run ./cmd/aletheia eval --suite evals/mikros_functional --json
 ```
 
 Useful inspection commands:
@@ -74,7 +76,12 @@ const response = await client.chat.completions.create({
 console.log(response.choices[0].message.content);
 ```
 
-`aletheia-mikros` is the public router/profile: a small local model with stable basic conversation and Aletheia command help. `aletheia-hephaestus` is the first coding specialist for snippets, explanations, and OpenAI-compatible coding-agent tool-call formatting. The product target is a verified agent, not a general chatbot: local memory, SearXNG research, repair, specialist checkpoints, and verifiers must beat guessing. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
+`aletheia-mikros` is the public model name. Internally it routes between chat,
+coding, tool-call, research, and abstention behavior, but `/v1/models` presents
+one product surface. The target is a verified small agent: local memory, SearXNG
+research, coding knowledge, repair, and verifiers must beat guessing. `solve`
+keeps its verifier-first flow and does not require serving a separate planner
+checkpoint.
 
 See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.
 

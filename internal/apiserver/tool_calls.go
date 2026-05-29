@@ -27,7 +27,7 @@ func (s *Server) codingToolCall(modelID string, req chatCompletionRequest) (assi
 	if last == "" {
 		return assistantToolCall{}, false
 	}
-	if !isCodingTask(last) && !hasAny(last, "read", "search", "grep", "inspect", "list", "run", "test", "build", "edit", "patch", "write") {
+	if !isToolUseRequest(last) {
 		return assistantToolCall{}, false
 	}
 	tool, ok := chooseCodingTool(last, req.Tools)

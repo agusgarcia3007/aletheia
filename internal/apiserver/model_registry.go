@@ -115,10 +115,18 @@ func (s *Server) routeModel(requested string, messages []chatMessage, tools []ch
 	if !ok {
 		return nil, false, fmt.Errorf("model %q is not served by this Aletheia instance", requested)
 	}
-	if requested == mikrosModelName && (isChatActionRequest(lastUserMessage(messages)) || (len(tools) > 0 && isCodingTask(lastUserMessage(messages)))) {
+	last := lastUserMessage(messages)
+	if requested == mikrosModelName && (isChatActionRequest(last) || (len(tools) > 0 && isToolUseRequest(last))) {
 		if coding, ok := s.model(hephaestusModelName); ok {
 			return coding, true, nil
 		}
 	}
 	return base, false, nil
+}
+
+func (s *Server) publicModelOrder() []string {
+	if _, ok := s.models[mikrosModelName]; ok {
+		return []string{mikrosModelName}
+	}
+	return append([]string(nil), s.modelOrder...)
 }

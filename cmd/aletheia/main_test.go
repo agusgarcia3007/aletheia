@@ -212,6 +212,33 @@ func TestRunLearnExportsMemoryDatasets(t *testing.T) {
 	}
 }
 
+func TestRunDatasetBuildAndTokenizerTrain(t *testing.T) {
+	root := t.TempDir()
+	datasetPath := filepath.Join(root, "mikros_v1.jsonl")
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "dataset", "build", "--profile", "mikros-v1", "--out", datasetPath})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "profile: mikros-v1") || !strings.Contains(out, "examples:") {
+		t.Fatalf("dataset output:\n%s", out)
+	}
+	tokenizerPath := filepath.Join(root, "tokenizer.json")
+	out, err = captureStdout(t, func() error {
+		return run([]string{"aletheia", "tokenizer", "train", "--dataset", datasetPath, "--out", tokenizerPath, "--vocab-size", "512"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "tokenizer:") || !strings.Contains(out, "vocab_size:") {
+		t.Fatalf("tokenizer output:\n%s", out)
+	}
+	if _, err := os.Stat(tokenizerPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunResearchBackgroundAndStatus(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "memory.sqlite")

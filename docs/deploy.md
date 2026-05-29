@@ -20,7 +20,14 @@ ALETHEIA_CHECKPOINTS_DIR=/app/checkpoints
 ALETHEIA_MODEL=aletheia-mikros
 ```
 
-The Dockerfile is self-contained for the default API models: it builds the Go binary and writes `aletheia-mikros` plus `aletheia-hephaestus` checkpoints inside the image. By default `ALETHEIA_TRAIN_STEPS=0`, which creates bootstrap checkpoints without retraining on every deploy. For trained checkpoints in a fresh Dokploy build, set the Docker build arg `ALETHEIA_TRAIN_STEPS=450` or train locally and deploy/mount the resulting `checkpoints/` directory. Mikros remains the public default model and auto-routes coding prompts to Hephaestus when both are loaded.
+The Dockerfile is self-contained for the default API model: it builds the Go
+binary, generates the Mikros V1 bootstrap dataset, and writes a public
+`aletheia-mikros` checkpoint plus any hidden internal specialist checkpoints
+needed by the router. By default `ALETHEIA_TRAIN_STEPS=0`, so deploys create
+bootstrap artifacts without long retraining. For a trained image, set the Docker
+build arg `ALETHEIA_TRAIN_STEPS` or train locally and deploy/mount the resulting
+`checkpoints/` directory. `/v1/models` should show `aletheia-mikros`; coding
+prompts route internally.
 
 ## API Smoke
 

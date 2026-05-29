@@ -194,8 +194,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	s.requests.Add(1)
-	data := make([]map[string]any, 0, len(s.modelOrder))
-	for _, id := range s.modelOrder {
+	publicModels := s.publicModelOrder()
+	data := make([]map[string]any, 0, len(publicModels))
+	for _, id := range publicModels {
 		data = append(data, map[string]any{
 			"id":       id,
 			"object":   "model",
@@ -235,15 +236,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		maxTokens = req.MaxCompletionTokens
 	}
 	if toolCall, ok := s.codingToolCall(served.ID, req); ok {
-		writeJSON(w, http.StatusOK, s.toolCallResponse(served.ID, toolCall, s.textUsage(prompt, toolCall.Function.Name)))
+		writeJSON(w, http.StatusOK, s.toolCallResponse(responseModelID(req.Model, served.ID), toolCall, s.textUsage(prompt, toolCall.Function.Name)))
 		return
 	}
 	if reply, ok := policyReply(served.ID, req.Messages); ok {
-		writeJSON(w, http.StatusOK, s.chatResponse(served.ID, reply, s.textUsage(prompt, reply)))
+		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
 	if reply, ok := trainedExampleReply(served, req.Messages); ok {
-		writeJSON(w, http.StatusOK, s.chatResponse(served.ID, reply, s.textUsage(prompt, reply)))
+		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+		return
+	}
+	if reply, ok := codingKnowledgeReply(req.Messages); ok {
+		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
 	if served.ID == mikrosModelName && served.Manifest.Step == 0 {
@@ -284,7 +289,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			"id":      s.id("chatcmpl"),
 			"object":  "chat.completion",
 			"created": time.Now().Unix(),
-			"model":   served.ID,
+			"model":   responseModelID(req.Model, served.ID),
 			"choices": []map[string]any{
 				{
 					"index": 0,
@@ -299,19 +304,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if query != "" && isUnsupportedFutureOutcomeQuestion(query) {
+		content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
+		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
+		return
+	}
 	if query != "" && s.store != nil {
-		if isUnsupportedFutureOutcomeQuestion(query) {
-			content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
-			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
-			return
-		}
 		if answer, ok := s.completedResearchAnswer(r.Context(), query); ok {
-			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, answer, s.textUsage(prompt, answer)))
+			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), answer, s.textUsage(prompt, answer)))
 			return
 		}
 		answer, err := (retriever.Retriever{Store: s.store}).Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
 		if err == nil && answer.Verified {
-			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
+			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
 			return
 		}
 		researchMode := "background"
@@ -322,19 +327,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			job, err := s.enqueueResearch(r.Context(), query, researchMode, 0)
 			if err == nil {
 				content := fmt.Sprintf("No tengo evidencia local suficiente. Inicié una investigación en background con job_id=%s. Consultá el resultado en unos segundos o repetí la pregunta luego.", job.ID)
-				writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
+				writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 				return
 			}
 		}
 		if researchMode == "off" || !s.research.Enabled {
 			content := "No tengo evidencia local suficiente para responder. La investigación web está deshabilitada."
-			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
+			writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 			return
 		}
 	}
 	if routed && served.ID == hephaestusModelName {
 		content := "Puedo ayudar con codigo, pero necesito un poco mas de contexto: lenguaje, objetivo, entrada/salida esperada y restricciones. No voy a buscar fuentes web para inventar una respuesta."
-		writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
+		writeJSON(w, http.StatusOK, s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
 	generated, usage, err := s.generate(served, prompt, generationOptions{
@@ -351,7 +356,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		"id":      s.id("chatcmpl"),
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
-		"model":   served.ID,
+		"model":   responseModelID(req.Model, served.ID),
 		"choices": []map[string]any{
 			{
 				"index": 0,
@@ -364,6 +369,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		},
 		"usage": usage,
 	})
+}
+
+func responseModelID(requested string, served string) string {
+	if requested == mikrosModelName {
+		return mikrosModelName
+	}
+	return served
 }
 
 func (s *Server) chatResponse(modelID string, content string, usage map[string]int) map[string]any {
@@ -737,6 +749,10 @@ func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []me
 		if score < requiredMeaningfulOverlap(len(queryTokens)) {
 			continue
 		}
+		text = cleanPublicResearchText(query, text)
+		if text == "" {
+			continue
+		}
 		if score > best.score || best.text == "" {
 			best = scoredClaim{text: text, score: score}
 		}
@@ -745,10 +761,108 @@ func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []me
 		return withEvidenceStatus(best.text, evidenceStatusFromAnswer(job.Answer))
 	}
 	answer := strings.TrimSpace(job.Answer)
+	answer = cleanPublicResearchText(query, answer)
 	if answer == "" || looksLikeTitleOnly(answer) || !researchAnswerMatchesQuery(query, job) {
 		return ""
 	}
 	return answer
+}
+
+func cleanPublicResearchText(query string, text string) string {
+	text = stripEvidenceLines(text)
+	text = stripPageChrome(text)
+	queryTokens := meaningfulChatTokens(query)
+	best := ""
+	bestScore := 0
+	for _, sentence := range splitPublicSentences(text) {
+		sentence = strings.TrimSpace(sentence)
+		if len([]rune(sentence)) < 35 || looksLikeTitleOnly(sentence) {
+			continue
+		}
+		score := meaningfulOverlap(queryTokens, meaningfulChatTokens(sentence))
+		if score > bestScore {
+			best = sentence
+			bestScore = score
+		}
+	}
+	if best == "" {
+		best = text
+	}
+	best = trimBeforePublicCoreTerm(query, best)
+	if len([]rune(best)) > 420 {
+		runes := []rune(best)
+		best = string(runes[:420])
+		if idx := strings.LastIndex(best, " "); idx > 180 {
+			best = best[:idx]
+		}
+		best += "."
+	}
+	return strings.TrimSpace(best)
+}
+
+func stripEvidenceLines(text string) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(lower, "evidence status:") || strings.HasPrefix(lower, "source:") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, " ")
+}
+
+func stripPageChrome(text string) string {
+	replacements := []string{
+		"WhatsApp", "Twitter", "Facebook", "Linkedin", "LinkedIn", "Telegram",
+		"Copiar URL", "Beloud", "Lo Ultimo", "Lo Último",
+	}
+	for _, value := range replacements {
+		text = strings.ReplaceAll(text, value, " ")
+	}
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func splitPublicSentences(text string) []string {
+	parts := regexp.MustCompile(`[.!?]\s+`).Split(text, -1)
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func trimBeforePublicCoreTerm(query string, text string) string {
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "whatsapp") &&
+		!strings.Contains(lower, "copiar") &&
+		!strings.Contains(lower, "fotografia") &&
+		!strings.Contains(lower, "redaccion") &&
+		!strings.Contains(lower, "publicado") &&
+		!strings.Contains(lower, "lo ultimo") {
+		return text
+	}
+	for token := range meaningfulChatTokens(query) {
+		if len(token) < 4 {
+			continue
+		}
+		if idx := strings.Index(lower, token); idx > 24 && idx < len(text) {
+			best := idx
+			for other := range meaningfulChatTokens(query) {
+				if len(other) < 4 {
+					continue
+				}
+				if otherIdx := strings.Index(lower, other); otherIdx > 24 && otherIdx < best {
+					best = otherIdx
+				}
+			}
+			return strings.TrimSpace(text[best:])
+		}
+	}
+	return text
 }
 
 func withEvidenceStatus(text string, status string) string {
@@ -878,6 +992,11 @@ func isCodingTask(query string) bool {
 		isProgrammingHelpRequest(normalized) ||
 		strings.Contains(normalized, "codigo") ||
 		strings.Contains(normalized, "code")
+}
+
+func isToolUseRequest(query string) bool {
+	normalized := normalizeBasicChat(query)
+	return isCodingTask(normalized) || hasAny(normalized, "read", "search", "grep", "inspect", "list", "run", "test", "build", "edit", "patch", "write")
 }
 
 var yearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)

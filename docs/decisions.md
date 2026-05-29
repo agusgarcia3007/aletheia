@@ -191,8 +191,16 @@
 
 ## Milestone Hephaestus Coding Model
 
-- Add `aletheia-hephaestus` as the first specialized coding model while keeping `aletheia-mikros` as the public default router.
-- Load multiple checkpoints from a registry directory in `serve`; `GET /v1/models` advertises all loaded local models.
-- Auto-route coding/programming-help prompts from Mikros to Hephaestus when the specialist is loaded, and report the actual model used in the OpenAI-compatible response.
+- Keep `aletheia-mikros` as the only public model name. Hephaestus remains an internal coding skill/checkpoint concept, not a required user-facing model.
+- Load multiple checkpoints from a registry directory in `serve`, but `GET /v1/models` advertises only the public Mikros surface by default.
+- Auto-route coding/programming-help prompts inside Mikros before retrieval/research, and keep the OpenAI-compatible response model as `aletheia-mikros` for public requests.
 - Support OpenAI-style `tools`/`tool_choice` wire fields and return `assistant.tool_calls` for coding-agent clients without executing tools server-side.
 - Keep OpenCode compatibility as the primary target; Cursor is documented as best-effort through custom OpenAI-compatible Base URL surfaces.
+
+## Milestone Mikros Functional V1
+
+- A single tiny chat dataset is not enough; Mikros V1 uses router modes, curated textbook-style examples, tool-use examples, abstention examples, and evidence-grounded research answers.
+- Coding prompts such as Rust/Go/JavaScript/React explanations are handled locally before research so stale web chunks cannot answer code questions.
+- Research answers are canonicalized into natural language before citation; raw HTML, page chrome, internal paths, and chunk dumps are not acceptable product responses.
+- `TransformerV2` is introduced as the real decoder architecture target while legacy checkpoints remain loadable for compatibility; large checkpoint training/promotion stays manual.
+- Dataset and tokenizer commands are added so the model artifact can be rebuilt reproducibly without paid APIs.

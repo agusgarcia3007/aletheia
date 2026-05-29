@@ -66,13 +66,13 @@ func TestModelsRequiresBearerAuth(t *testing.T) {
 	}
 }
 
-func TestModelsListsRegistryAndAutoRoutesCodingToHephaestus(t *testing.T) {
+func TestModelsListsPublicMikrosAndAutoRoutesCodingInternally(t *testing.T) {
 	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
 	models := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	server.Handler().ServeHTTP(models, req)
-	if models.Code != http.StatusOK || !strings.Contains(models.Body.String(), `"id":"aletheia-mikros"`) || !strings.Contains(models.Body.String(), `"id":"aletheia-hephaestus"`) {
+	if models.Code != http.StatusOK || !strings.Contains(models.Body.String(), `"id":"aletheia-mikros"`) || strings.Contains(models.Body.String(), `"id":"aletheia-hephaestus"`) {
 		t.Fatalf("models status = %d body=%s", models.Code, models.Body.String())
 	}
 
@@ -80,7 +80,7 @@ func TestModelsListsRegistryAndAutoRoutesCodingToHephaestus(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"model":"aletheia-hephaestus"`) || !strings.Contains(rec.Body.String(), "Rust") || strings.Contains(rec.Body.String(), "Fuentes") {
+	if !strings.Contains(rec.Body.String(), `"model":"aletheia-mikros"`) || !strings.Contains(rec.Body.String(), "Rust") || strings.Contains(rec.Body.String(), "Fuentes") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -88,7 +88,7 @@ func TestModelsListsRegistryAndAutoRoutesCodingToHephaestus(t *testing.T) {
 func TestHephaestusReturnsToolCallsWhenToolsProvided(t *testing.T) {
 	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
 	body := `{
-		"model":"aletheia-hephaestus",
+		"model":"aletheia-mikros",
 		"messages":[{"role":"user","content":"run the tests"}],
 		"tools":[{"type":"function","function":{"name":"run_command","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}}]
 	}`
@@ -250,6 +250,51 @@ func TestChatActionRequestsDoNotTriggerResearch(t *testing.T) {
 		}
 		if strings.Contains(rec.Body.String(), "job_id=") || strings.Contains(rec.Body.String(), "Fuentes:") {
 			t.Fatalf("message %q body=%s", tt.message, rec.Body.String())
+		}
+	}
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestCodingKnowledgePromptsStayNaturalAndOutOfResearch(t *testing.T) {
+	store := newTestStore(t)
+	server := newMultiModelTestServer(t, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	cases := []struct {
+		message string
+		want    []string
+		forbid  []string
+	}{
+		{message: "hablame de rust", want: []string{"Rust", "seguridad"}, forbid: []string{"Fuentes:", "job_id="}},
+		{message: "como hago una funcion en javacript?", want: []string{"JavaScript", "function add"}, forbid: []string{"```go", "Fuentes:"}},
+		{message: "que diferencia hay enter python y js", want: []string{"Python", "JavaScript"}, forbid: []string{"computerhoy", "Fuentes:"}},
+	}
+	for _, tt := range cases {
+		rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"`+tt.message+`"}]}`, "secret")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("message %q status = %d body=%s", tt.message, rec.Code, rec.Body.String())
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(rec.Body.String(), want) {
+				t.Fatalf("message %q missing %q body=%s", tt.message, want, rec.Body.String())
+			}
+		}
+		for _, forbid := range tt.forbid {
+			if strings.Contains(rec.Body.String(), forbid) {
+				t.Fatalf("message %q contains %q body=%s", tt.message, forbid, rec.Body.String())
+			}
 		}
 	}
 	jobs, err := store.ListResearchJobs(contextBackground(), 10)
@@ -448,6 +493,44 @@ func TestChatDoesNotCiteBlockedResearchSources(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "reddit.com") || strings.Contains(rec.Body.String(), "Blocked") || !strings.Contains(rec.Body.String(), "modelcontextprotocol.io") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestCompletedResearchAnswerStripsPageChrome(t *testing.T) {
+	store := newTestStore(t)
+	job, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{
+		ID:         "research-vietnam",
+		Query:      "que fue la guerra de vietnam?",
+		Status:     "completed",
+		Mode:       "background",
+		MaxSources: 2,
+		Answer:     "Fotografia de Stephen Wilkes Por Redaccion National Geographic Publicado 5 sep 2023 WhatsApp Twitter Facebook Copiar URL La Guerra de Vietnam fue un conflicto armado que se desarrollo durante la Guerra Fria.\n\nEvidence status: web_verified\nSource: https://example.com/vietnam",
+		Confidence: 0.8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertWebSource(contextBackground(), memory.WebSource{
+		ID:          "source-vietnam",
+		JobID:       job.ID,
+		URL:         "https://history.example.com/vietnam",
+		FinalURL:    "https://history.example.com/vietnam",
+		Title:       "Vietnam War",
+		Status:      "stored",
+		ContentHash: "v",
+		TrustScore:  0.8,
+		ByteSize:    10,
+		ContentType: "text/html",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, Options{APIKey: "secret", Store: store, Research: research.Options{Enabled: true, AutoOnKnowledgeGap: true, MinTrustScore: 0.35}})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"que fue la guerra de vietnam?"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "WhatsApp") || strings.Contains(rec.Body.String(), "Copiar URL") || !strings.Contains(rec.Body.String(), "Guerra de Vietnam") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

@@ -5,11 +5,11 @@ When a Cursor build supports a custom OpenAI-compatible provider, configure:
 ```text
 Base URL: https://api.llmlabs.app/v1
 API key:  <your ALETHEIA_API_KEY>
-Model:    aletheia-hephaestus
+Model:    aletheia-mikros
 ```
 
-Use `aletheia-hephaestus` for coding chat or plan-style prompts. Use
-`aletheia-mikros` only when you want the general Aletheia router.
+Use `aletheia-mikros` for chat and coding prompts. Mikros routes internally
+between chat, coding, tool-call, research, and abstention behavior.
 
 Compatibility caveat: Cursor's own Composer/apply/tab features may use internal
 providers that do not honor arbitrary external OpenAI-compatible endpoints. In

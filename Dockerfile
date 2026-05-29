@@ -9,9 +9,12 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/aletheia ./cmd/aletheia
 ARG ALETHEIA_TRAIN_STEPS=0
+RUN /out/aletheia dataset build \
+    --profile mikros-v1 \
+    --out /out/datasets/mikros_v1.jsonl
 RUN /out/aletheia train \
-    --config configs/aletheia-mikros.yaml \
-    --dataset datasets/aletheia_mikros.jsonl \
+    --config configs/aletheia-mikros-v1.yaml \
+    --dataset /out/datasets/mikros_v1.jsonl \
     --out /out/checkpoints/aletheia-mikros \
     --steps ${ALETHEIA_TRAIN_STEPS}
 RUN /out/aletheia train \
