@@ -28,6 +28,9 @@ func TestHealthDoesNotRequireAuth(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"model_loaded":true`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"context_length":`) || !strings.Contains(rec.Body.String(), `"supports_tools":true`) || !strings.Contains(rec.Body.String(), `"tokenizer":"byte-v1"`) {
+		t.Fatalf("body missing serving metadata = %s", rec.Body.String())
+	}
 }
 
 func TestReadyAndMetricsDoNotRequireAuth(t *testing.T) {
@@ -167,6 +170,47 @@ func TestChatCompletionsStreamsToolCallsForAgentClients(t *testing.T) {
 	}
 }
 
+func TestToolChoiceNoneDisablesToolCalls(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[{"role":"user","content":"analiza este repositorio"}],
+		"tool_choice":"none",
+		"tools":[{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"tool_calls"`) {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestToolChoiceRequiredAndNamed(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	required := `{
+		"model":"aletheia-mikros",
+		"messages":[{"role":"user","content":"usa herramienta"}],
+		"tool_choice":"required",
+		"tools":[{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", required, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"list_files"`) {
+		t.Fatalf("required status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	named := `{
+		"model":"aletheia-mikros",
+		"messages":[{"role":"user","content":"analiza este repositorio"}],
+		"tool_choice":{"type":"function","function":{"name":"grep"}},
+		"tools":[
+			{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
+			{"type":"function","function":{"name":"grep","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}}}
+		]
+	}`
+	rec = serveJSON(t, server, "/v1/chat/completions", named, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"grep"`) {
+		t.Fatalf("named status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAgentAnalysisPrefersListBeforeRead(t *testing.T) {
 	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
 	body := `{
@@ -183,13 +227,36 @@ func TestAgentAnalysisPrefersListBeforeRead(t *testing.T) {
 	}
 }
 
+func TestAgentUsesToolHistoryForNextStep(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[
+			{"role":"user","content":"analiza este repositorio"},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_files","arguments":"{\"path\":\".\"}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"README.md\ngo.mod\ncmd/aletheia/main.go"}
+		],
+		"tools":[
+			{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
+			{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"limit":{"type":"integer"},"offset":{"type":"integer"}},"required":["filePath"]}}}
+		]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"read"`) || !strings.Contains(rec.Body.String(), `README.md`) || strings.Contains(rec.Body.String(), `"name":"list_files"`) {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"limit":0`) {
+		t.Fatalf("read used zero limit: %s", rec.Body.String())
+	}
+}
+
 func TestAgentToolResultStopsRepeatedToolLoop(t *testing.T) {
 	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
 	body := `{
 		"model":"aletheia-mikros",
 		"messages":[
 			{"role":"user","content":"analiza este repositorio"},
-			{"role":"assistant","content":null},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"filePath\":\"README.md\",\"limit\":200,\"offset\":0}"}}]},
 			{"role":"tool","tool_call_id":"call_1","content":"README.md\ngo.mod\ncmd/aletheia/main.go"}
 		],
 		"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"limit":{"type":"integer"},"offset":{"type":"integer"}},"required":["filePath"]}}}]
@@ -197,6 +264,66 @@ func TestAgentToolResultStopsRepeatedToolLoop(t *testing.T) {
 	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), "README.md") {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAgentNoFilesStopsWithExplanation(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[
+			{"role":"user","content":"analiza este repo"},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"glob","arguments":"{\"path\":\".\"}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"No files found"}
+		],
+		"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"limit":{"type":"integer"},"offset":{"type":"integer"}},"required":["filePath"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), "no devolvió archivos") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAgentRepoAnalysisLoopProgressesAndStops(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	tools := `"tools":[
+		{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
+		{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"limit":{"type":"integer"},"offset":{"type":"integer"}},"required":["filePath"]}}},
+		{"type":"function","function":{"name":"grep","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}}}
+	]`
+	first := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"analiza este repositorio"}],`+tools+`}`, "secret")
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"name":"list_files"`) {
+		t.Fatalf("first status = %d body=%s", first.Code, first.Body.String())
+	}
+	second := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[
+		{"role":"user","content":"analiza este repositorio"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_files","arguments":"{\"path\":\".\"}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"README.md\ngo.mod\ncmd/aletheia/main.go"}
+	],`+tools+`}`, "secret")
+	if second.Code != http.StatusOK || !strings.Contains(second.Body.String(), `"name":"read"`) || !strings.Contains(second.Body.String(), `README.md`) {
+		t.Fatalf("second status = %d body=%s", second.Code, second.Body.String())
+	}
+	third := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[
+		{"role":"user","content":"analiza este repositorio"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_files","arguments":"{\"path\":\".\"}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"README.md\ngo.mod\ncmd/aletheia/main.go"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_2","type":"function","function":{"name":"read","arguments":"{\"filePath\":\"README.md\",\"limit\":200,\"offset\":0}"}}]},
+		{"role":"tool","tool_call_id":"call_2","content":"# Aletheia\n\nGo API server. Run tests with go test ./..."}
+	],`+tools+`}`, "secret")
+	if third.Code != http.StatusOK || !strings.Contains(third.Body.String(), `"name":"grep"`) {
+		t.Fatalf("third status = %d body=%s", third.Code, third.Body.String())
+	}
+	final := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[
+		{"role":"user","content":"analiza este repositorio"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_files","arguments":"{\"path\":\".\"}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"README.md\ngo.mod\ncmd/aletheia/main.go"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_2","type":"function","function":{"name":"read","arguments":"{\"filePath\":\"README.md\",\"limit\":200,\"offset\":0}"}}]},
+		{"role":"tool","tool_call_id":"call_2","content":"# Aletheia\n\nGo API server. Run tests with go test ./..."},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_3","type":"function","function":{"name":"grep","arguments":"{\"path\":\".\",\"pattern\":\"test main package scripts cmd src\"}"}}]},
+		{"role":"tool","tool_call_id":"call_3","content":"cmd/aletheia/main.go\ninternal/apiserver/server.go\ninternal/apiserver/server_test.go"}
+	],`+tools+`}`, "secret")
+	if final.Code != http.StatusOK || strings.Contains(final.Body.String(), `"tool_calls"`) || !strings.Contains(final.Body.String(), "repo Go") {
+		t.Fatalf("final status = %d body=%s", final.Code, final.Body.String())
 	}
 }
 

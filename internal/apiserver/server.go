@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	DefaultAddr         = ":8080"
-	DefaultCheckpoint   = "checkpoints/aletheia-mikros"
-	DefaultMaxBodyBytes = int64(1 << 20)
+	DefaultAddr            = ":8080"
+	DefaultCheckpoint      = "checkpoints/aletheia-mikros"
+	DefaultMaxBodyBytes    = int64(1 << 20)
+	DefaultMaxOutputTokens = 256
 )
 
 type Options struct {
@@ -147,10 +148,15 @@ func normalizeOptions(opts Options) Options {
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	s.requests.Add(1)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "ok",
-		"model_loaded": true,
-		"model":        s.defaultModel,
-		"models":       s.modelOrder,
+		"status":             "ok",
+		"model_loaded":       true,
+		"model":              s.defaultModel,
+		"models":             s.modelOrder,
+		"context_length":     s.defaultContextLength(),
+		"max_output_tokens":  DefaultMaxOutputTokens,
+		"supports_tools":     true,
+		"supports_streaming": true,
+		"tokenizer":          "byte-v1",
 	})
 }
 
@@ -168,11 +174,16 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":            "ready",
-		"model_loaded":      true,
-		"models_loaded":     len(s.models),
-		"memory_configured": s.store != nil,
-		"research_enabled":  s.research.Enabled,
+		"status":             "ready",
+		"model_loaded":       true,
+		"models_loaded":      len(s.models),
+		"memory_configured":  s.store != nil,
+		"research_enabled":   s.research.Enabled,
+		"context_length":     s.defaultContextLength(),
+		"max_output_tokens":  DefaultMaxOutputTokens,
+		"supports_tools":     true,
+		"supports_streaming": true,
+		"tokenizer":          "byte-v1",
 	})
 }
 
@@ -210,6 +221,13 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func (s *Server) defaultContextLength() int {
+	if model, ok := s.models[s.defaultModel]; ok {
+		return model.Manifest.Config.ContextLength
+	}
+	return 0
+}
+
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	s.requests.Add(1)
 	s.chats.Add(1)
@@ -218,7 +236,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond := func(response map[string]any) {
-		s.writeChatCompletion(w, req.Stream, response)
+		includeUsage := req.StreamOptions != nil && req.StreamOptions.IncludeUsage
+		s.writeChatCompletion(w, req.Stream, includeUsage, response)
 	}
 	served, routed, err := s.routeModel(req.Model, req.Messages, req.Tools)
 	if err != nil {
@@ -387,15 +406,15 @@ func (s *Server) chatResponse(modelID string, content string, usage map[string]i
 	}
 }
 
-func (s *Server) writeChatCompletion(w http.ResponseWriter, stream bool, response map[string]any) {
+func (s *Server) writeChatCompletion(w http.ResponseWriter, stream bool, includeUsage bool, response map[string]any) {
 	if !stream {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	writeChatCompletionStream(w, response)
+	writeChatCompletionStream(w, includeUsage, response)
 }
 
-func writeChatCompletionStream(w http.ResponseWriter, response map[string]any) {
+func writeChatCompletionStream(w http.ResponseWriter, includeUsage bool, response map[string]any) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -476,7 +495,8 @@ func writeChatCompletionStream(w http.ResponseWriter, response map[string]any) {
 			"finish_reason": finishReason,
 		}},
 	})
-	if usage, ok := response["usage"].(map[string]int); ok && len(usage) > 0 {
+	if includeUsage {
+		usage, _ := response["usage"].(map[string]int)
 		writeSSEChunk(w, flusher, map[string]any{
 			"id":      id,
 			"object":  "chat.completion.chunk",
@@ -715,7 +735,7 @@ func (s *Server) generate(served *servedModel, prompt string, opts generationOpt
 	eos, _ := s.tokenizer.ID("<EOS>")
 	actRespond, _ := s.tokenizer.ID("<ACT_RESPOND>")
 	tokens, err := served.Runner.Generate(prompt, runner.Options{
-		MaxTokens:   intDefault(opts.MaxTokens, 32),
+		MaxTokens:   intDefault(opts.MaxTokens, DefaultMaxOutputTokens),
 		TopK:        intDefault(opts.TopK, 0),
 		TopP:        floatDefault(opts.TopP, 1),
 		Temperature: floatDefault(opts.Temperature, 0),

@@ -25,7 +25,12 @@ type chatCompletionRequest struct {
 	TopP                *float64             `json:"top_p,omitempty"`
 	TopK                *int                 `json:"top_k,omitempty"`
 	Stream              bool                 `json:"stream,omitempty"`
+	StreamOptions       *streamOptions       `json:"stream_options,omitempty"`
 	Aletheia            *aletheiaChatOptions `json:"aletheia,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 type aletheiaChatOptions struct {
@@ -48,10 +53,11 @@ type researchRequest struct {
 }
 
 type chatMessage struct {
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	Name       string `json:"name,omitempty"`
+	Role       string              `json:"role"`
+	Content    string              `json:"content"`
+	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Name       string              `json:"name,omitempty"`
+	ToolCalls  []assistantToolCall `json:"tool_calls,omitempty"`
 }
 
 type chatTool struct {
@@ -67,10 +73,11 @@ type chatToolFunction struct {
 
 func (m *chatMessage) UnmarshalJSON(raw []byte) error {
 	var aux struct {
-		Role       string          `json:"role"`
-		Content    json.RawMessage `json:"content"`
-		ToolCallID string          `json:"tool_call_id,omitempty"`
-		Name       string          `json:"name,omitempty"`
+		Role       string              `json:"role"`
+		Content    json.RawMessage     `json:"content"`
+		ToolCallID string              `json:"tool_call_id,omitempty"`
+		Name       string              `json:"name,omitempty"`
+		ToolCalls  []assistantToolCall `json:"tool_calls,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &aux); err != nil {
 		return err
@@ -78,6 +85,7 @@ func (m *chatMessage) UnmarshalJSON(raw []byte) error {
 	m.Role = strings.TrimSpace(aux.Role)
 	m.ToolCallID = strings.TrimSpace(aux.ToolCallID)
 	m.Name = strings.TrimSpace(aux.Name)
+	m.ToolCalls = aux.ToolCalls
 	if m.Role == "" {
 		return fmt.Errorf("message role is required")
 	}

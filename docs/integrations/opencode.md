@@ -1,19 +1,30 @@
 # OpenCode Integration
 
 Aletheia exposes an OpenAI-compatible Chat Completions API. For coding-agent
-use, point OpenCode at the public Mikros model; coding/tool prompts route
-internally:
+use, configure OpenCode with the public Mikros model and the real context limit
+served by the current checkpoint:
 
-```ts
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
-
-export const aletheia = createOpenAICompatible({
-  name: "aletheia",
-  apiKey: process.env.ALETHEIA_API_KEY,
-  baseURL: "https://api.llmlabs.app/v1",
-})
-
-export const model = aletheia("aletheia-mikros")
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "aletheia": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Aletheia",
+      "options": {
+        "baseURL": "https://api.llmlabs.app/v1",
+        "apiKey": "{env:ALETHEIA_API_KEY}"
+      },
+      "models": {
+        "aletheia-mikros": {
+          "name": "Aletheia Mikros",
+          "limit": { "context": 1024, "output": 256 }
+        }
+      }
+    }
+  },
+  "model": "aletheia/aletheia-mikros"
+}
 ```
 
 Use `aletheia-mikros` for coding tasks. Hidden specialist checkpoints or coding
@@ -29,3 +40,7 @@ Compatibility notes:
   `stream_options`.
 - `stream:true` is supported with Server-Sent Events and may emit either content
   chunks or `assistant.tool_calls` chunks.
+- Aletheia never executes tools server-side. OpenCode executes filesystem and
+  shell tools locally.
+- Check `/healthz` for the live `context_length`, `max_output_tokens`,
+  `supports_tools`, and tokenizer metadata before advertising larger limits.

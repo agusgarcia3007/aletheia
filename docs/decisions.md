@@ -204,3 +204,11 @@
 - Research answers are canonicalized into natural language before citation; raw HTML, page chrome, internal paths, and chunk dumps are not acceptable product responses.
 - `TransformerV2` is introduced as the real decoder architecture target while legacy checkpoints remain loadable for compatibility; large checkpoint training/promotion stays manual.
 - Dataset and tokenizer commands are added so the model artifact can be rebuilt reproducibly without paid APIs.
+
+## Milestone OpenCode Ready V1
+
+- Treat OpenCode as the primary coding-agent compatibility target through the OpenAI-compatible Chat Completions surface.
+- Aletheia is a passive provider for tools: it may return `assistant.tool_calls`, but the client executes filesystem and shell tools locally.
+- Advertise the real served context and output limits through health/readiness metadata; do not pretend the byte-tokenizer Mikros checkpoint has a 65K context.
+- Add deterministic tool-loop state: respect `tool_choice`, avoid repeated tool fingerprints, cap tool calls with `ALETHEIA_AGENT_MAX_TOOL_CALLS`, and prefer list/read/search progression for repo analysis.
+- Keep command suggestions read-only or verifier-oriented by default; do not emit destructive shell commands.
