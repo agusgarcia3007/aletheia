@@ -852,7 +852,7 @@ func requiredMeaningfulOverlap(tokenCount int) int {
 
 func isChatActionRequest(query string) bool {
 	normalized := normalizeBasicChat(query)
-	return isRepoRepairRequest(normalized) || isCodeGenerationRequest(normalized)
+	return isRepoRepairRequest(normalized) || isCodeGenerationRequest(normalized) || isProgrammingHelpRequest(normalized)
 }
 
 var chatStopWords = map[string]bool{
@@ -872,6 +872,7 @@ func isCodingTask(query string) bool {
 		strings.Contains(normalized, "repo") ||
 		strings.Contains(normalized, "go test") ||
 		strings.Contains(normalized, "patch") ||
+		isProgrammingHelpRequest(normalized) ||
 		strings.Contains(normalized, "codigo") ||
 		strings.Contains(normalized, "code")
 }

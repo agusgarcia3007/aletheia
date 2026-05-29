@@ -67,6 +67,29 @@ func isCodeGenerationRequest(normalized string) bool {
 		hasAny(normalized, "codigo", "code", "componente", "component", "funcion", "function", "react", "go", "typescript", "javascript")
 }
 
+func isProgrammingHelpRequest(normalized string) bool {
+	if isRepoRepairRequest(normalized) {
+		return false
+	}
+	return hasProgrammingLanguage(normalized) && hasAny(normalized,
+		"codigo", "code", "ejemplo", "example", "snippet",
+		"como es", "como se escribe", "como hago", "como hacer", "muestrame", "mostrame",
+	)
+}
+
+func hasProgrammingLanguage(normalized string) bool {
+	languages := []string{
+		"rust", "python", "go", "golang", "javascript", "typescript", "react",
+		"java", "c++", "cpp", "c#", "csharp", "php", "ruby", "swift", "kotlin",
+	}
+	for _, language := range languages {
+		if strings.Contains(normalized, language) {
+			return true
+		}
+	}
+	return false
+}
+
 func lastUserMessage(messages []chatMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {

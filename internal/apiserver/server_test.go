@@ -228,8 +228,20 @@ func TestChatActionRequestsDoNotTriggerResearch(t *testing.T) {
 
 func TestChatUsesTrainedExamplesForActionRequests(t *testing.T) {
 	store := newTestStore(t)
+	if _, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{
+		ID:         "research-mcp-unrelated",
+		Query:      "what is MCP in agents?",
+		Status:     "completed",
+		Mode:       "background",
+		MaxSources: 1,
+		Answer:     "MCP connects agents with tools.\n\nEvidence status: web_verified",
+		Confidence: 0.8,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	server := newTestServerWithExamples(t, []string{
 		`{"prompt":"<USER>haz un componente de react<ASSISTANT>","completion":"export function GreetingCard() { return <section>Hola</section> }<EOS>"}`,
+		`{"prompt":"<USER>como es el codigo en rust?<ASSISTANT>","completion":"fn main() { println!(\"Hola desde Rust\"); }<EOS>"}`,
 	}, Options{
 		APIKey: "secret",
 		Store:  store,
@@ -239,18 +251,27 @@ func TestChatUsesTrainedExamplesForActionRequests(t *testing.T) {
 			MaxSources:         3,
 		},
 	})
-	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"haz un componente de react"}]}`, "secret")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	cases := []struct {
+		message string
+		want    string
+	}{
+		{message: "haz un componente de react", want: "GreetingCard"},
+		{message: "como es el codigo en rust?", want: "println!"},
 	}
-	if !strings.Contains(rec.Body.String(), "GreetingCard") || strings.Contains(rec.Body.String(), "job_id=") || strings.Contains(rec.Body.String(), "Fuentes:") {
-		t.Fatalf("body = %s", rec.Body.String())
+	for _, tt := range cases {
+		rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"`+tt.message+`"}]}`, "secret")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("message %q status = %d body=%s", tt.message, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), tt.want) || strings.Contains(rec.Body.String(), "job_id=") || strings.Contains(rec.Body.String(), "Fuentes:") || strings.Contains(rec.Body.String(), "MCP") {
+			t.Fatalf("message %q body=%s", tt.message, rec.Body.String())
+		}
 	}
 	jobs, err := store.ListResearchJobs(contextBackground(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(jobs) != 0 {
+	if len(jobs) != 1 {
 		t.Fatalf("jobs = %+v", jobs)
 	}
 }
