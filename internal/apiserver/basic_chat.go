@@ -42,10 +42,7 @@ func basicMikrosChatReply(modelName string, messages []chatMessage) (string, boo
 	}
 }
 
-func mikrosPolicyReply(modelName string, messages []chatMessage) (string, bool) {
-	if modelName != mikrosModelName {
-		return "", false
-	}
+func policyReply(modelName string, messages []chatMessage) (string, bool) {
 	normalized := normalizeBasicChat(lastUserMessage(messages))
 	if isRepoRepairRequest(normalized) {
 		return "Para reparar codigo necesito un repo y una tarea verificable. Usa `aletheia solve --task task.json --verifier static_go_parse,go_test --trace`; desde chat no aplico patches ni ejecuto comandos.", true

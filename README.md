@@ -7,6 +7,7 @@ Core commands:
 ```bash
 go run ./cmd/aletheia init --db data/memory.sqlite
 go run ./cmd/aletheia train --config configs/aletheia-mikros.yaml --dataset datasets/aletheia_mikros.jsonl --out checkpoints/aletheia-mikros
+go run ./cmd/aletheia train --config configs/aletheia-hephaestus.yaml --dataset datasets/aletheia_hephaestus.jsonl --out checkpoints/aletheia-hephaestus
 go run ./cmd/aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
 go run ./cmd/aletheia solve --task examples/buggy-go/task.json --trace
 go run ./cmd/aletheia eval --suite evals/bootstrap --json
@@ -36,7 +37,7 @@ OpenAI-compatible local API:
 
 ```bash
 ALETHEIA_API_KEY=local-dev go run ./cmd/aletheia serve \
-  --checkpoint checkpoints/aletheia-mikros \
+  --checkpoints-dir checkpoints \
   --model aletheia-mikros \
   --addr :8080
 ```
@@ -73,7 +74,7 @@ const response = await client.chat.completions.create({
 console.log(response.choices[0].message.content);
 ```
 
-`aletheia-mikros` is the first public checkpoint/profile: a small local model with stable basic conversation and Aletheia command help. The chat dataset trains code snippets, repo repair handoff to `solve`, abstention, and answer-with-citations behavior. Deterministic chat replies are only a zero-step bootstrap fallback; trained checkpoints should answer through the model plus the router/research policy. The product target is a verified agent, not a general chatbot: local memory, SearXNG research, repair, and verifiers must beat guessing. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
+`aletheia-mikros` is the public router/profile: a small local model with stable basic conversation and Aletheia command help. `aletheia-hephaestus` is the first coding specialist for snippets, explanations, and OpenAI-compatible coding-agent tool-call formatting. The product target is a verified agent, not a general chatbot: local memory, SearXNG research, repair, specialist checkpoints, and verifiers must beat guessing. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
 
 See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.
 

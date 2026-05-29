@@ -103,7 +103,7 @@ Usage:
   aletheia research --query "what is MCP in agents?" [--db %s] [--background]
   aletheia research-status --job research_id [--db %s]
   aletheia jobs [--db %s]
-  aletheia serve [--addr :8080] [--checkpoint checkpoints/aletheia-mikros] [--model aletheia-mikros] [--api-key $ALETHEIA_API_KEY]
+  aletheia serve [--addr :8080] [--checkpoints-dir checkpoints] [--checkpoint checkpoints/aletheia-mikros] [--model aletheia-mikros] [--api-key $ALETHEIA_API_KEY]
 `, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 }
 
@@ -842,6 +842,7 @@ func runServe(args []string) error {
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	addr := fs.String("addr", envDefault("ALETHEIA_ADDR", apiserver.DefaultAddr), "HTTP listen address")
 	checkpoint := fs.String("checkpoint", envDefault("ALETHEIA_CHECKPOINT", apiserver.DefaultCheckpoint), "model checkpoint directory")
+	checkpointsDir := fs.String("checkpoints-dir", os.Getenv("ALETHEIA_CHECKPOINTS_DIR"), "directory containing model checkpoint subdirectories")
 	modelName := fs.String("model", os.Getenv("ALETHEIA_MODEL"), "served OpenAI-compatible model name")
 	apiKey := fs.String("api-key", os.Getenv("ALETHEIA_API_KEY"), "Bearer API key for /v1/* endpoints")
 	auth := fs.String("auth", envDefault("ALETHEIA_AUTH", "bearer"), "authentication mode: bearer or none")
@@ -865,14 +866,15 @@ func runServe(args []string) error {
 		return err
 	}
 	server, err := apiserver.New(apiserver.Options{
-		Addr:         *addr,
-		Checkpoint:   *checkpoint,
-		ModelName:    *modelName,
-		APIKey:       *apiKey,
-		Auth:         *auth,
-		MaxBodyBytes: *maxBodyBytes,
-		Store:        store,
-		Research:     researchOptionsFromConfig(cfg),
+		Addr:           *addr,
+		Checkpoint:     *checkpoint,
+		CheckpointsDir: *checkpointsDir,
+		ModelName:      *modelName,
+		APIKey:         *apiKey,
+		Auth:           *auth,
+		MaxBodyBytes:   *maxBodyBytes,
+		Store:          store,
+		Research:       researchOptionsFromConfig(cfg),
 	})
 	if err != nil {
 		return err

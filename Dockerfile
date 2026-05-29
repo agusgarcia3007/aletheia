@@ -14,6 +14,11 @@ RUN /out/aletheia train \
     --dataset datasets/aletheia_mikros.jsonl \
     --out /out/checkpoints/aletheia-mikros \
     --steps ${ALETHEIA_TRAIN_STEPS}
+RUN /out/aletheia train \
+    --config configs/aletheia-hephaestus.yaml \
+    --dataset datasets/aletheia_hephaestus.jsonl \
+    --out /out/checkpoints/aletheia-hephaestus \
+    --steps ${ALETHEIA_TRAIN_STEPS}
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
@@ -22,7 +27,7 @@ COPY --from=build /out/aletheia /app/aletheia
 COPY --from=build /out/checkpoints /app/checkpoints
 
 ENV ALETHEIA_ADDR=:8080
-ENV ALETHEIA_CHECKPOINT=/app/checkpoints/aletheia-mikros
+ENV ALETHEIA_CHECKPOINTS_DIR=/app/checkpoints
 ENV ALETHEIA_MODEL=aletheia-mikros
 
 EXPOSE 8080

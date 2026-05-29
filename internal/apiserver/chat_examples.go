@@ -46,8 +46,8 @@ func loadTrainedChatExamples(checkpoint string) ([]trainedChatExample, error) {
 	return examples, scanner.Err()
 }
 
-func (s *Server) trainedExampleReply(messages []chatMessage) (string, bool) {
-	if len(s.chatExamples) == 0 {
+func trainedExampleReply(served *servedModel, messages []chatMessage) (string, bool) {
+	if served == nil || len(served.ChatExamples) == 0 {
 		return "", false
 	}
 	user := normalizeBasicChat(lastUserMessage(messages))
@@ -57,7 +57,7 @@ func (s *Server) trainedExampleReply(messages []chatMessage) (string, bool) {
 	queryTerms := meaningfulChatTokens(user)
 	var best trainedChatExample
 	bestScore := 0.0
-	for _, ex := range s.chatExamples {
+	for _, ex := range served.ChatExamples {
 		if !frameworkCompatible(user, ex.normalizedUser) {
 			continue
 		}

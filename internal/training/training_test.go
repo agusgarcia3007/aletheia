@@ -36,23 +36,31 @@ func TestLoadDatasetAndRejectOverContext(t *testing.T) {
 
 func TestLoadChatBasicDataset(t *testing.T) {
 	tok := tokenizer.New()
-	path := "../../datasets/aletheia_mikros.jsonl"
-	samples, err := LoadDataset(path, tok, 256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(samples) < 20 {
-		t.Fatalf("chat samples = %d, want at least 20", len(samples))
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "<ACT_") {
-		t.Fatal("chat dataset should not train action tokens")
-	}
-	if !strings.Contains(string(raw), "aletheia-mikros") {
-		t.Fatal("chat dataset should document the public chat model slug")
+	for _, tc := range []struct {
+		path string
+		want string
+		min  int
+	}{
+		{path: "../../datasets/aletheia_mikros.jsonl", want: "aletheia-mikros", min: 20},
+		{path: "../../datasets/aletheia_hephaestus.jsonl", want: "rust", min: 15},
+	} {
+		samples, err := LoadDataset(tc.path, tok, 384)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(samples) < tc.min {
+			t.Fatalf("%s samples = %d, want at least %d", tc.path, len(samples), tc.min)
+		}
+		raw, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "<ACT_") {
+			t.Fatalf("%s should not train action tokens", tc.path)
+		}
+		if !strings.Contains(strings.ToLower(string(raw)), tc.want) {
+			t.Fatalf("%s should contain %q", tc.path, tc.want)
+		}
 	}
 }
 

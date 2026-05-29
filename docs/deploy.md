@@ -16,11 +16,11 @@ Required service environment variables:
 ```env
 ALETHEIA_ADDR=:8080
 ALETHEIA_API_KEY=<your-api-key>
-ALETHEIA_CHECKPOINT=/app/checkpoints/aletheia-mikros
+ALETHEIA_CHECKPOINTS_DIR=/app/checkpoints
 ALETHEIA_MODEL=aletheia-mikros
 ```
 
-The Dockerfile is self-contained for the default API model: it builds the Go binary and writes an `aletheia-mikros` checkpoint inside the image. By default `ALETHEIA_TRAIN_STEPS=0`, which creates a bootstrap checkpoint without retraining on every deploy. For a real trained chat model in a fresh Dokploy build, set the Docker build arg `ALETHEIA_TRAIN_STEPS=450` or train locally and deploy/mount the resulting `checkpoints/aletheia-mikros`. Deterministic chat responses are only the zero-step fallback; trained checkpoints answer through the model plus router/research policy.
+The Dockerfile is self-contained for the default API models: it builds the Go binary and writes `aletheia-mikros` plus `aletheia-hephaestus` checkpoints inside the image. By default `ALETHEIA_TRAIN_STEPS=0`, which creates bootstrap checkpoints without retraining on every deploy. For trained checkpoints in a fresh Dokploy build, set the Docker build arg `ALETHEIA_TRAIN_STEPS=450` or train locally and deploy/mount the resulting `checkpoints/` directory. Mikros remains the public default model and auto-routes coding prompts to Hephaestus when both are loaded.
 
 ## API Smoke
 

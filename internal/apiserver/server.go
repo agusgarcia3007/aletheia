@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"aletheia/internal/memory"
-	"aletheia/internal/model"
 	"aletheia/internal/research"
 	"aletheia/internal/retriever"
 	"aletheia/internal/runner"
@@ -28,22 +27,23 @@ const (
 )
 
 type Options struct {
-	Addr         string
-	Checkpoint   string
-	ModelName    string
-	APIKey       string
-	Auth         string
-	MaxBodyBytes int64
-	Store        *memory.Store
-	Research     research.Options
+	Addr           string
+	Checkpoint     string
+	CheckpointsDir string
+	ModelName      string
+	APIKey         string
+	Auth           string
+	MaxBodyBytes   int64
+	Store          *memory.Store
+	Research       research.Options
 }
 
 type Server struct {
 	opts         Options
-	manifest     model.Manifest
+	defaultModel string
+	modelOrder   []string
+	models       map[string]*servedModel
 	tokenizer    *tokenizer.Tokenizer
-	runner       runner.Runner
-	chatExamples []trainedChatExample
 	store        *memory.Store
 	research     research.Options
 	created      int64
@@ -62,23 +62,17 @@ func New(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("ALETHEIA_API_KEY or --api-key is required unless --auth none")
 	}
 	tok := tokenizer.New()
-	m, manifest, err := model.Load(opts.Checkpoint, tok.VocabSize())
+	models, order, defaultModel, err := loadModelRegistry(opts, tok)
 	if err != nil {
-		return nil, fmt.Errorf("load checkpoint %s: %w", opts.Checkpoint, err)
+		return nil, err
 	}
-	if opts.ModelName == "" {
-		opts.ModelName = manifest.Config.Name
-	}
-	chatExamples, err := loadTrainedChatExamples(opts.Checkpoint)
-	if err != nil {
-		return nil, fmt.Errorf("load chat examples: %w", err)
-	}
+	opts.ModelName = defaultModel
 	return &Server{
 		opts:         opts,
-		manifest:     manifest,
+		defaultModel: defaultModel,
+		modelOrder:   order,
+		models:       models,
 		tokenizer:    tok,
-		runner:       runner.New(m, tok),
-		chatExamples: chatExamples,
 		store:        opts.Store,
 		research:     opts.Research,
 		created:      time.Now().Unix(),
@@ -127,7 +121,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) ModelName() string {
-	return s.opts.ModelName
+	return s.defaultModel
 }
 
 func (s *Server) Addr() string {
@@ -155,7 +149,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",
 		"model_loaded": true,
-		"model":        s.opts.ModelName,
+		"model":        s.defaultModel,
+		"models":       s.modelOrder,
 	})
 }
 
@@ -175,6 +170,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":            "ready",
 		"model_loaded":      true,
+		"models_loaded":     len(s.models),
 		"memory_configured": s.store != nil,
 		"research_enabled":  s.research.Enabled,
 	})
@@ -198,16 +194,18 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	s.requests.Add(1)
+	data := make([]map[string]any, 0, len(s.modelOrder))
+	for _, id := range s.modelOrder {
+		data = append(data, map[string]any{
+			"id":       id,
+			"object":   "model",
+			"created":  s.created,
+			"owned_by": "aletheia",
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
-		"data": []map[string]any{
-			{
-				"id":       s.opts.ModelName,
-				"object":   "model",
-				"created":  s.created,
-				"owned_by": "aletheia",
-			},
-		},
+		"data":   data,
 	})
 }
 
@@ -218,7 +216,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeRequest(w, r, &req) {
 		return
 	}
-	if err := s.validateModel(req.Model); err != nil {
+	served, routed, err := s.routeModel(req.Model, req.Messages, req.Tools)
+	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "model", "model_not_found", err.Error())
 		return
 	}
@@ -231,21 +230,29 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "messages", "invalid_messages", err.Error())
 		return
 	}
-	if reply, ok := mikrosPolicyReply(s.opts.ModelName, req.Messages); ok {
-		writeJSON(w, http.StatusOK, s.chatResponse(reply, s.textUsage(prompt, reply)))
+	maxTokens := req.MaxTokens
+	if maxTokens == nil {
+		maxTokens = req.MaxCompletionTokens
+	}
+	if toolCall, ok := s.codingToolCall(served.ID, req); ok {
+		writeJSON(w, http.StatusOK, s.toolCallResponse(served.ID, toolCall, s.textUsage(prompt, toolCall.Function.Name)))
 		return
 	}
-	if reply, ok := s.trainedExampleReply(req.Messages); ok {
-		writeJSON(w, http.StatusOK, s.chatResponse(reply, s.textUsage(prompt, reply)))
+	if reply, ok := policyReply(served.ID, req.Messages); ok {
+		writeJSON(w, http.StatusOK, s.chatResponse(served.ID, reply, s.textUsage(prompt, reply)))
 		return
 	}
-	if s.manifest.Step == 0 {
-		if reply, ok := basicMikrosChatReply(s.opts.ModelName, req.Messages); ok {
+	if reply, ok := trainedExampleReply(served, req.Messages); ok {
+		writeJSON(w, http.StatusOK, s.chatResponse(served.ID, reply, s.textUsage(prompt, reply)))
+		return
+	}
+	if served.ID == mikrosModelName && served.Manifest.Step == 0 {
+		if reply, ok := basicMikrosChatReply(served.ID, req.Messages); ok {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"id":      s.id("chatcmpl"),
 				"object":  "chat.completion",
 				"created": time.Now().Unix(),
-				"model":   s.opts.ModelName,
+				"model":   served.ID,
 				"choices": []map[string]any{
 					{
 						"index": 0,
@@ -263,8 +270,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(lastUserMessage(req.Messages))
 	if query != "" && isChatActionRequest(query) {
-		generated, usage, err := s.generate(prompt, generationOptions{
-			MaxTokens:   req.MaxTokens,
+		generated, usage, err := s.generate(served, prompt, generationOptions{
+			MaxTokens:   maxTokens,
 			Temperature: req.Temperature,
 			TopP:        req.TopP,
 			TopK:        req.TopK,
@@ -277,7 +284,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			"id":      s.id("chatcmpl"),
 			"object":  "chat.completion",
 			"created": time.Now().Unix(),
-			"model":   s.opts.ModelName,
+			"model":   served.ID,
 			"choices": []map[string]any{
 				{
 					"index": 0,
@@ -295,16 +302,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if query != "" && s.store != nil {
 		if isUnsupportedFutureOutcomeQuestion(query) {
 			content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
-			writeJSON(w, http.StatusOK, s.chatResponse(content, s.textUsage(prompt, content)))
+			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
 			return
 		}
 		if answer, ok := s.completedResearchAnswer(r.Context(), query); ok {
-			writeJSON(w, http.StatusOK, s.chatResponse(answer, s.textUsage(prompt, answer)))
+			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, answer, s.textUsage(prompt, answer)))
 			return
 		}
 		answer, err := (retriever.Retriever{Store: s.store}).Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
 		if err == nil && answer.Verified {
-			writeJSON(w, http.StatusOK, s.chatResponse(answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
+			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
 			return
 		}
 		researchMode := "background"
@@ -315,18 +322,23 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			job, err := s.enqueueResearch(r.Context(), query, researchMode, 0)
 			if err == nil {
 				content := fmt.Sprintf("No tengo evidencia local suficiente. Inicié una investigación en background con job_id=%s. Consultá el resultado en unos segundos o repetí la pregunta luego.", job.ID)
-				writeJSON(w, http.StatusOK, s.chatResponse(content, s.textUsage(prompt, content)))
+				writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
 				return
 			}
 		}
 		if researchMode == "off" || !s.research.Enabled {
 			content := "No tengo evidencia local suficiente para responder. La investigación web está deshabilitada."
-			writeJSON(w, http.StatusOK, s.chatResponse(content, s.textUsage(prompt, content)))
+			writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
 			return
 		}
 	}
-	generated, usage, err := s.generate(prompt, generationOptions{
-		MaxTokens:   req.MaxTokens,
+	if routed && served.ID == hephaestusModelName {
+		content := "Puedo ayudar con codigo, pero necesito un poco mas de contexto: lenguaje, objetivo, entrada/salida esperada y restricciones. No voy a buscar fuentes web para inventar una respuesta."
+		writeJSON(w, http.StatusOK, s.chatResponse(served.ID, content, s.textUsage(prompt, content)))
+		return
+	}
+	generated, usage, err := s.generate(served, prompt, generationOptions{
+		MaxTokens:   maxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
@@ -339,7 +351,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		"id":      s.id("chatcmpl"),
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
-		"model":   s.opts.ModelName,
+		"model":   served.ID,
 		"choices": []map[string]any{
 			{
 				"index": 0,
@@ -354,12 +366,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) chatResponse(content string, usage map[string]int) map[string]any {
+func (s *Server) chatResponse(modelID string, content string, usage map[string]int) map[string]any {
 	return map[string]any{
 		"id":      s.id("chatcmpl"),
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
-		"model":   s.opts.ModelName,
+		"model":   modelID,
 		"choices": []map[string]any{
 			{
 				"index": 0,
@@ -505,15 +517,16 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeRequest(w, r, &req) {
 		return
 	}
-	if err := s.validateModel(req.Model); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "model", "model_not_found", err.Error())
+	served, ok := s.model(req.Model)
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "model", "model_not_found", fmt.Sprintf("model %q is not served by this Aletheia instance", req.Model))
 		return
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "prompt", "missing_prompt", "prompt is required")
 		return
 	}
-	generated, usage, err := s.generate(req.Prompt, generationOptions{
+	generated, usage, err := s.generate(served, req.Prompt, generationOptions{
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
@@ -527,7 +540,7 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		"id":      s.id("cmpl"),
 		"object":  "text_completion",
 		"created": time.Now().Unix(),
-		"model":   s.opts.ModelName,
+		"model":   served.ID,
 		"choices": []map[string]any{
 			{
 				"text":          generated,
@@ -578,24 +591,14 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) validateModel(name string) error {
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("model is required")
-	}
-	if name != s.opts.ModelName {
-		return fmt.Errorf("model %q is not served by this Aletheia instance", name)
-	}
-	return nil
-}
-
-func (s *Server) generate(prompt string, opts generationOptions) (string, map[string]int, error) {
+func (s *Server) generate(served *servedModel, prompt string, opts generationOptions) (string, map[string]int, error) {
 	promptTokens := s.tokenizer.Encode(prompt)
 	if len(promptTokens) == 0 {
 		return "", nil, fmt.Errorf("prompt produced no tokens")
 	}
 	eos, _ := s.tokenizer.ID("<EOS>")
 	actRespond, _ := s.tokenizer.ID("<ACT_RESPOND>")
-	tokens, err := s.runner.Generate(prompt, runner.Options{
+	tokens, err := served.Runner.Generate(prompt, runner.Options{
 		MaxTokens:   intDefault(opts.MaxTokens, 32),
 		TopK:        intDefault(opts.TopK, 0),
 		TopP:        floatDefault(opts.TopP, 1),

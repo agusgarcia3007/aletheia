@@ -66,6 +66,41 @@ func TestModelsRequiresBearerAuth(t *testing.T) {
 	}
 }
 
+func TestModelsListsRegistryAndAutoRoutesCodingToHephaestus(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	models := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	server.Handler().ServeHTTP(models, req)
+	if models.Code != http.StatusOK || !strings.Contains(models.Body.String(), `"id":"aletheia-mikros"`) || !strings.Contains(models.Body.String(), `"id":"aletheia-hephaestus"`) {
+		t.Fatalf("models status = %d body=%s", models.Code, models.Body.String())
+	}
+
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"como es el codigo en rust?"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"model":"aletheia-hephaestus"`) || !strings.Contains(rec.Body.String(), "Rust") || strings.Contains(rec.Body.String(), "Fuentes") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestHephaestusReturnsToolCallsWhenToolsProvided(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-hephaestus",
+		"messages":[{"role":"user","content":"run the tests"}],
+		"tools":[{"type":"function","function":{"name":"run_command","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"finish_reason":"tool_calls"`) || !strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), "go test ./...") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestChatCompletionsReturnsOpenAIShape(t *testing.T) {
 	server := newTestServer(t, Options{APIKey: "secret"})
 	body := `{"model":"aletheia-mikros","messages":[{"role":"user","content":"hola como estas?"}],"max_tokens":8}`
@@ -523,12 +558,48 @@ func newNamedTestServer(t *testing.T, modelName string, opts Options) *Server {
 	return server
 }
 
+func newMultiModelTestServer(t *testing.T, opts Options) *Server {
+	t.Helper()
+	root := t.TempDir()
+	writeTestCheckpoint(t, filepath.Join(root, "aletheia-mikros"), "aletheia-mikros", 0, []string{
+		`{"prompt":"<USER>hola<ASSISTANT>","completion":"Hola desde Mikros.<EOS>"}`,
+	})
+	writeTestCheckpoint(t, filepath.Join(root, "aletheia-hephaestus"), "aletheia-hephaestus", 1, []string{
+		`{"prompt":"<USER>como es el codigo en rust?<ASSISTANT>","completion":"Un ejemplo Rust: fn main() { println!(\"Hola\"); }<EOS>"}`,
+		`{"prompt":"<USER>write a small Rust function that adds two numbers<ASSISTANT>","completion":"fn add(a: i32, b: i32) -> i32 { a + b }<EOS>"}`,
+	})
+	opts.CheckpointsDir = root
+	opts.Checkpoint = ""
+	if opts.APIKey == "" && opts.Auth == "" {
+		opts.APIKey = "secret"
+	}
+	server, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server
+}
+
 func newTestServerWithExamples(t *testing.T, examples []string, opts Options) *Server {
 	t.Helper()
 	checkpoint := filepath.Join(t.TempDir(), "checkpoint")
+	writeTestCheckpoint(t, checkpoint, "aletheia-mikros", 1, examples)
+	opts.Checkpoint = checkpoint
+	if opts.APIKey == "" && opts.Auth == "" {
+		opts.APIKey = "secret"
+	}
+	server, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server
+}
+
+func writeTestCheckpoint(t *testing.T, checkpoint string, modelName string, step int, examples []string) {
+	t.Helper()
 	tok := tokenizer.New()
 	m, err := model.New(model.Config{
-		Name:          "aletheia-mikros",
+		Name:          modelName,
 		VocabSize:     tok.VocabSize(),
 		ContextLength: 64,
 		NLayers:       1,
@@ -540,21 +611,12 @@ func newTestServerWithExamples(t *testing.T, examples []string, opts Options) *S
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Save(checkpoint, tok.VocabSize(), 1, 0.1); err != nil {
+	if err := m.Save(checkpoint, tok.VocabSize(), step, 0.1); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(checkpoint, chatExamplesFile), []byte(strings.Join(examples, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opts.Checkpoint = checkpoint
-	if opts.APIKey == "" && opts.Auth == "" {
-		opts.APIKey = "secret"
-	}
-	server, err := New(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return server
 }
 
 func serveJSON(t *testing.T, server *Server, path string, body string, apiKey string) *httptest.ResponseRecorder {

@@ -7,14 +7,25 @@ import (
 )
 
 type chatCompletionRequest struct {
-	Model       string               `json:"model"`
-	Messages    []chatMessage        `json:"messages"`
-	MaxTokens   *int                 `json:"max_tokens,omitempty"`
-	Temperature *float64             `json:"temperature,omitempty"`
-	TopP        *float64             `json:"top_p,omitempty"`
-	TopK        *int                 `json:"top_k,omitempty"`
-	Stream      bool                 `json:"stream,omitempty"`
-	Aletheia    *aletheiaChatOptions `json:"aletheia,omitempty"`
+	Model               string               `json:"model"`
+	Messages            []chatMessage        `json:"messages"`
+	Tools               []chatTool           `json:"tools,omitempty"`
+	ToolChoice          json.RawMessage      `json:"tool_choice,omitempty"`
+	ParallelToolCalls   *bool                `json:"parallel_tool_calls,omitempty"`
+	Stop                json.RawMessage      `json:"stop,omitempty"`
+	N                   *int                 `json:"n,omitempty"`
+	Seed                *int                 `json:"seed,omitempty"`
+	User                string               `json:"user,omitempty"`
+	ResponseFormat      json.RawMessage      `json:"response_format,omitempty"`
+	PresencePenalty     *float64             `json:"presence_penalty,omitempty"`
+	FrequencyPenalty    *float64             `json:"frequency_penalty,omitempty"`
+	MaxTokens           *int                 `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int                 `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64             `json:"temperature,omitempty"`
+	TopP                *float64             `json:"top_p,omitempty"`
+	TopK                *int                 `json:"top_k,omitempty"`
+	Stream              bool                 `json:"stream,omitempty"`
+	Aletheia            *aletheiaChatOptions `json:"aletheia,omitempty"`
 }
 
 type aletheiaChatOptions struct {
@@ -37,19 +48,36 @@ type researchRequest struct {
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+}
+
+type chatTool struct {
+	Type     string           `json:"type"`
+	Function chatToolFunction `json:"function"`
+}
+
+type chatToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 func (m *chatMessage) UnmarshalJSON(raw []byte) error {
 	var aux struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCallID string          `json:"tool_call_id,omitempty"`
+		Name       string          `json:"name,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &aux); err != nil {
 		return err
 	}
 	m.Role = strings.TrimSpace(aux.Role)
+	m.ToolCallID = strings.TrimSpace(aux.ToolCallID)
+	m.Name = strings.TrimSpace(aux.Name)
 	if m.Role == "" {
 		return fmt.Errorf("message role is required")
 	}
@@ -97,6 +125,13 @@ func chatPrompt(messages []chatMessage) (string, error) {
 			b.WriteString(content)
 		case "assistant":
 			b.WriteString("<ASSISTANT>")
+			b.WriteString(content)
+		case "tool":
+			b.WriteString("<RESULT>")
+			if msg.Name != "" {
+				b.WriteString(msg.Name)
+				b.WriteString(": ")
+			}
 			b.WriteString(content)
 		default:
 			return "", fmt.Errorf("unsupported message role %q", msg.Role)

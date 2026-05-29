@@ -188,3 +188,11 @@
 - Keep deterministic chat replies only as a zero-step bootstrap fallback. Once a checkpoint has training steps, `/v1/chat/completions` should rely on the model plus router/tool policy, not a catalog of hardcoded answers.
 - Treat future outcome questions as insufficient evidence unless direct current evidence exists. A 2038 outcome cannot be marked `web_verified` from 1938 or speculative/forum sources.
 - Public citations filter blocked/social/forum sources and pages titled `Blocked`; research may store raw evidence for audit, but chat should not present those as trusted citations.
+
+## Milestone Hephaestus Coding Model
+
+- Add `aletheia-hephaestus` as the first specialized coding model while keeping `aletheia-mikros` as the public default router.
+- Load multiple checkpoints from a registry directory in `serve`; `GET /v1/models` advertises all loaded local models.
+- Auto-route coding/programming-help prompts from Mikros to Hephaestus when the specialist is loaded, and report the actual model used in the OpenAI-compatible response.
+- Support OpenAI-style `tools`/`tool_choice` wire fields and return `assistant.tool_calls` for coding-agent clients without executing tools server-side.
+- Keep OpenCode compatibility as the primary target; Cursor is documented as best-effort through custom OpenAI-compatible Base URL surfaces.

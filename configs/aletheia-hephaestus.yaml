@@ -1,0 +1,54 @@
+project:
+  name: aletheia-mu
+  data_dir: ./data
+  checkpoint_dir: ./checkpoints
+  memory_db: ./data/memory.sqlite
+
+model:
+  name: aletheia-hephaestus
+  vocab_size: 512
+  context_length: 384
+  n_layers: 1
+  n_heads: 4
+  d_model: 64
+  d_ff: 128
+  dropout: 0.0
+  rope: true
+  norm: rmsnorm
+  activation: swiglu
+  seed: 29
+
+training:
+  batch_size: 16
+  learning_rate: 0.06
+  weight_decay: 0.0
+  max_steps: 550
+  grad_clip: 5.0
+  checkpoint_every: 100
+  eval_every: 25
+
+inference:
+  temperature: 0.0
+  top_k: 8
+  top_p: 1.0
+  max_tokens: 160
+
+search:
+  strategy: greedy
+  beam_width: 4
+  max_depth: 8
+  budget_seconds: 120
+  budget_tool_calls: 50
+
+verifiers:
+  go_test:
+    enabled: true
+    command: "go test ./..."
+    timeout_seconds: 60
+
+memory:
+  chunk_size: 1200
+  chunk_overlap: 200
+  max_file_bytes: 524288
+  embedding: hashing
+  graph_enabled: true

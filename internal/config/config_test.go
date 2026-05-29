@@ -10,7 +10,7 @@ import (
 )
 
 func TestLoadRepoConfigs(t *testing.T) {
-	for _, path := range []string{"../../configs/tiny.yaml", "../../configs/seed-10m.yaml", "../../configs/micro.yaml", "../../configs/aletheia-mikros.yaml"} {
+	for _, path := range []string{"../../configs/tiny.yaml", "../../configs/seed-10m.yaml", "../../configs/micro.yaml", "../../configs/aletheia-mikros.yaml", "../../configs/aletheia-hephaestus.yaml"} {
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("load %s: %v", path, err)
