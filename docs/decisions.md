@@ -220,3 +220,5 @@
 - Expand contextual follow-ups with the previous user topic for retrieval/research, but ask for context on ambiguous follow-ups such as `y entonces?`.
 - Add `mikros-curriculum-v1` as the first structured curriculum profile with intent, expected mode, answer style, tags, and negative examples.
 - Add `evals/mikros_artifact` as the product gate for natural answers, zero links-only responses, correct coding routing, factual abstention, and canonical research answers.
+- Add deterministic answer synthesis before public research responses. Winner/list questions must extract the requested entity or list from evidence; page titles and generic snippets are not valid answers.
+- For OpenCode repo analysis, synthesize tool arguments from the tool schema and task intent, not from the raw prompt. `glob` uses a real wildcard, `read` uses concrete manifests, and no-files results trigger a different useful probe before the agent gives up.

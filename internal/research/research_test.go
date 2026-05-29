@@ -193,3 +193,58 @@ func TestWorkerFutureOutcomeIsInsufficientEvidence(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 }
+
+func TestWorkerSynthesizesCopaAmericaLatestWinner(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.CreateResearchJob(ctx, memory.ResearchJob{Query: "quiero saber quien gano la ultima copa america", MaxSources: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := FetchedPage{
+		URL:         "https://copaamerica.example/champions",
+		FinalURL:    "https://copaamerica.example/champions",
+		StatusCode:  http.StatusOK,
+		ContentType: "text/html",
+		FetchedAt:   time.Now().UTC(),
+		Body: []byte(`<html><head><title>Todos los campeones de la Copa America</title></head><body>
+			<h1>Todos los campeones de la CONMEBOL Copa America</h1>
+			<p>2024 Argentina campeon. 2021 Argentina campeon. 2019 Brasil campeon. 2016 Chile campeon.</p>
+		</body></html>`),
+	}
+	worker := NewWorker(store, Options{Enabled: true, MaxSources: 1, MinTrustScore: 0.1, JobTimeout: time.Second})
+	worker.Searcher = FakeSearchProvider{Results: []SearchResult{{Title: "Todos los campeones", URL: page.URL, Snippet: "Copa America 2024 Argentina campeon", Rank: 1}}}
+	worker.Fetcher = FakeFetcher{Pages: map[string]FetchedPage{page.URL: page}}
+	result, err := worker.RunJob(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Answer, "Argentina ganó la Copa América 2024") {
+		t.Fatalf("answer = %q", result.Answer)
+	}
+}
+
+func TestWorkerSynthesizesLastFiveCopaAmericaWinners(t *testing.T) {
+	answer, ok := CanonicalAnswer("quienes ganaron las ultimas 5 copas america?", []string{
+		"Palmares Copa America: 2024 Argentina campeon. 2021 Argentina campeon. 2019 Brasil campeon. 2016 Chile campeon. 2015 Chile campeon. 2011 Uruguay campeon.",
+	})
+	if !ok || !strings.Contains(answer, "2024: Argentina") || !strings.Contains(answer, "2015: Chile") {
+		t.Fatalf("answer=%q ok=%v", answer, ok)
+	}
+}
+
+func TestWorkerSynthesizesWorldCup2014Winner(t *testing.T) {
+	answer, ok := CanonicalAnswer("quien gano el mundial brasil 2014?", []string{
+		"La final de la Copa Mundial de Futbol de 2014 se disputo entre Alemania y Argentina. Alemania vencio a Argentina por 1-0.",
+	})
+	if !ok || !strings.Contains(answer, "Alemania ganó el Mundial de Brasil 2014") {
+		t.Fatalf("answer=%q ok=%v", answer, ok)
+	}
+}

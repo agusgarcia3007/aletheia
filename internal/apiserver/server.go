@@ -903,6 +903,9 @@ type researchCandidate struct {
 }
 
 func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []memory.WebSource, claims []memory.WebClaim) string {
+	if answer, ok := research.CanonicalAnswer(query, publicResearchEvidenceTexts(job, sources, claims)); ok {
+		return answer
+	}
 	queryTokens := meaningfulChatTokens(query)
 	sourceTitles := map[string]bool{}
 	for _, source := range sources {
@@ -929,6 +932,20 @@ func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []me
 		return ""
 	}
 	return answer
+}
+
+func publicResearchEvidenceTexts(job memory.ResearchJob, sources []memory.WebSource, claims []memory.WebClaim) []string {
+	texts := []string{job.Query, job.Answer}
+	for _, source := range sources {
+		if !publicWebSourceAllowed(source) {
+			continue
+		}
+		texts = append(texts, source.Title, source.Snippet)
+	}
+	for _, claim := range claims {
+		texts = append(texts, claim.Claim)
+	}
+	return texts
 }
 
 func bestResearchCandidate(query string, queryTokens map[string]bool, sourceTitles map[string]bool, best researchCandidate, candidate string) researchCandidate {

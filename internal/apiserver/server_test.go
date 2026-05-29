@@ -279,7 +279,37 @@ func TestAgentNoFilesStopsWithExplanation(t *testing.T) {
 		"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object","properties":{"filePath":{"type":"string"},"limit":{"type":"integer"},"offset":{"type":"integer"}},"required":["filePath"]}}}]
 	}`
 	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), "no devolvió archivos") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), `"name":"read"`) || !strings.Contains(rec.Body.String(), `README.md`) {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAgentGlobUsesWildcardForRepoAnalysis(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[{"role":"user","content":"analiza este repo"}],
+		"tools":[{"type":"function","function":{"name":"glob","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"glob"`) || !strings.Contains(rec.Body.String(), `**/*`) || strings.Contains(rec.Body.String(), `analiza este repo`) {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAgentRetriesGlobWithWildcardAfterBadNoFiles(t *testing.T) {
+	server := newMultiModelTestServer(t, Options{APIKey: "secret"})
+	body := `{
+		"model":"aletheia-mikros",
+		"messages":[
+			{"role":"user","content":"analiza este repo"},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"glob","arguments":"{\"pattern\":\"analiza este repo\",\"path\":\".\"}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"No files found"}
+		],
+		"tools":[{"type":"function","function":{"name":"glob","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}}}]
+	}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tool_calls"`) || !strings.Contains(rec.Body.String(), `**/*`) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }

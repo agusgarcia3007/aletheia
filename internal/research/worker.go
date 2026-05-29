@@ -298,6 +298,9 @@ func confidence(sources []RankedSource) float64 {
 }
 
 func answerFromSources(query string, report ResearchResult) string {
+	if answer, ok := CanonicalAnswer(query, researchEvidenceTexts(report)); ok {
+		return answer
+	}
 	best := ""
 	bestScore := -1
 	queryTokens := keywordSet(query)
@@ -336,6 +339,20 @@ func answerFromSources(query string, report ResearchResult) string {
 		return best
 	}
 	return fmt.Sprintf("No hay evidencia web suficiente para responder sobre %q.", query)
+}
+
+func researchEvidenceTexts(report ResearchResult) []string {
+	var texts []string
+	for _, source := range report.Sources {
+		if source.Status != "stored" {
+			continue
+		}
+		texts = append(texts, source.Title, source.Snippet, source.Extracted.Title, source.Extracted.Text)
+		for _, claim := range source.Claims {
+			texts = append(texts, claim.Text)
+		}
+	}
+	return texts
 }
 
 func canonicalClaimAnswer(query string, text string) string {

@@ -154,10 +154,12 @@ func chooseNextTool(prompt string, tools []chatTool, choice toolChoice, state to
 func repoAnalysisCandidates(prompt string, tools []chatTool, state toolState) []toolCandidate {
 	var out []toolCandidate
 	if resultsIndicateNoFiles(state.Results) {
+		out = append(out, repoListingCandidates(prompt, tools)...)
+		out = append(out, candidatesByPreferenceWithFile(prompt, tools, []string{"read", "open", "cat"}, "README.md")...)
 		return out
 	}
 	if len(state.Results) == 0 {
-		out = append(out, candidatesByPreference(prompt, tools, []string{"list", "glob", "find"})...)
+		out = append(out, repoListingCandidates(prompt, tools)...)
 	}
 	if manifest := manifestFromResults(state.Results); manifest != "" {
 		out = append(out, candidatesByPreferenceWithFile(prompt, tools, []string{"read", "open", "cat"}, manifest)...)
@@ -167,6 +169,33 @@ func repoAnalysisCandidates(prompt string, tools []chatTool, state toolState) []
 	}
 	if len(out) == 0 {
 		out = append(out, candidatesByPreference(prompt, tools, []string{"search", "grep", "read"})...)
+	}
+	return out
+}
+
+func repoListingCandidates(prompt string, tools []chatTool) []toolCandidate {
+	candidates := candidatesByPreferenceStrict(prompt, tools, []string{"list", "glob", "find"})
+	for i := range candidates {
+		name := strings.ToLower(candidates[i].Tool.Function.Name)
+		if strings.Contains(name, "glob") {
+			setQueryArgument(candidates[i].Args, "**/*")
+		}
+		if strings.Contains(name, "find") {
+			setQueryArgument(candidates[i].Args, "README.md go.mod package.json Cargo.toml pyproject.toml")
+		}
+		setPathArgument(candidates[i].Args, ".")
+	}
+	return candidates
+}
+
+func candidatesByPreferenceStrict(prompt string, tools []chatTool, preferred []string) []toolCandidate {
+	var out []toolCandidate
+	for _, needle := range preferred {
+		for _, tool := range tools {
+			if strings.Contains(strings.ToLower(tool.Function.Name), needle) {
+				out = append(out, candidateForPrompt(prompt, tool, toolState{}))
+			}
+		}
 	}
 	return out
 }
@@ -269,6 +298,14 @@ func defaultArgument(toolName string, name string, raw json.RawMessage, prompt s
 		}
 		return "."
 	case strings.Contains(lower, "query") || strings.Contains(lower, "pattern") || strings.Contains(lower, "search"):
+		if isRepoAnalysisPrompt(normalizeBasicChat(prompt)) {
+			if strings.Contains(toolLower, "glob") {
+				return "**/*"
+			}
+			if strings.Contains(toolLower, "find") {
+				return "README.md go.mod package.json Cargo.toml pyproject.toml"
+			}
+		}
 		return prompt
 	case strings.Contains(lower, "content") || strings.Contains(lower, "text"):
 		return ""
