@@ -698,11 +698,12 @@ func formatResearchAnswer(query string, job memory.ResearchJob, sources []memory
 				continue
 			}
 			seen[url] = true
-			title := source.Title
+			title := publicSourceTitle(source.Title)
 			if title == "" {
-				title = url
+				b.WriteString(fmt.Sprintf("- %s\n", url))
+			} else {
+				b.WriteString(fmt.Sprintf("- %s - %s\n", title, url))
 			}
-			b.WriteString(fmt.Sprintf("- %s - %s\n", title, url))
 			written++
 			if written >= 5 {
 				break
@@ -710,6 +711,19 @@ func formatResearchAnswer(query string, job memory.ResearchJob, sources []memory
 		}
 	}
 	return strings.TrimSpace(b.String()), true
+}
+
+func publicSourceTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" || looksLikeTitleOnly(title) {
+		return ""
+	}
+	return title
+}
+
+type researchCandidate struct {
+	text  string
+	score int
 }
 
 func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []memory.WebSource, claims []memory.WebClaim) string {
@@ -720,28 +734,15 @@ func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []me
 			sourceTitles[normalizeBasicChat(source.Title)] = true
 		}
 	}
-	type scoredClaim struct {
-		text  string
-		score int
-	}
-	var best scoredClaim
+	var best researchCandidate
 	for _, claim := range claims {
-		text := strings.TrimSpace(claim.Claim)
-		normalized := normalizeBasicChat(text)
-		if sourceTitles[normalized] || looksLikeTitleOnly(text) {
+		best = bestResearchCandidate(query, queryTokens, sourceTitles, best, claim.Claim)
+	}
+	for _, source := range sources {
+		if !publicWebSourceAllowed(source) {
 			continue
 		}
-		score := meaningfulOverlap(queryTokens, meaningfulChatTokens(text))
-		if score < requiredMeaningfulOverlap(len(queryTokens)) {
-			continue
-		}
-		text = cleanPublicResearchText(query, text)
-		if text == "" {
-			continue
-		}
-		if score > best.score || best.text == "" {
-			best = scoredClaim{text: text, score: score}
-		}
+		best = bestResearchCandidate(query, queryTokens, sourceTitles, best, source.Snippet)
 	}
 	if best.text != "" {
 		return withEvidenceStatus(best.text, evidenceStatusFromAnswer(job.Answer))
@@ -752,6 +753,29 @@ func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []me
 		return ""
 	}
 	return answer
+}
+
+func bestResearchCandidate(query string, queryTokens map[string]bool, sourceTitles map[string]bool, best researchCandidate, candidate string) researchCandidate {
+	text := strings.TrimSpace(candidate)
+	normalized := normalizeBasicChat(text)
+	if text == "" || sourceTitles[normalized] || looksLikeTitleOnly(text) {
+		return best
+	}
+	score := meaningfulOverlap(queryTokens, meaningfulChatTokens(text))
+	if score < requiredMeaningfulOverlap(len(queryTokens)) {
+		return best
+	}
+	text = cleanPublicResearchText(query, text)
+	if text == "" || looksLikeTitleOnly(text) {
+		return best
+	}
+	if natural := naturalizeResearchAnswer(query, text); natural != "" {
+		text = natural
+	}
+	if score > best.score || best.text == "" {
+		best = researchCandidate{text: text, score: score}
+	}
+	return best
 }
 
 func cleanPublicResearchText(query string, text string) string {
@@ -784,6 +808,36 @@ func cleanPublicResearchText(query string, text string) string {
 		best += "."
 	}
 	return strings.TrimSpace(best)
+}
+
+func naturalizeResearchAnswer(query string, text string) string {
+	normalized := normalizeBasicChat(query)
+	if hasAny(normalized, "quien gano", "quien ganó", "who won") {
+		cleaned := strings.TrimSpace(text)
+		if cleaned == "" || looksLikeTitleOnly(cleaned) {
+			return ""
+		}
+		if hasAny(normalizeBasicChat(cleaned), "gano", "ganó", "vencio", "venció", "campeon", "campeón", "won", "defeated") {
+			return sentenceCase(cleaned)
+		}
+	}
+	return ""
+}
+
+func sentenceCase(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if runes[0] >= 'a' && runes[0] <= 'z' {
+		runes[0] = runes[0] - ('a' - 'A')
+	}
+	out := string(runes)
+	if !strings.HasSuffix(out, ".") && !strings.HasSuffix(out, "!") && !strings.HasSuffix(out, "?") {
+		out += "."
+	}
+	return out
 }
 
 func stripEvidenceLines(text string) string {
@@ -852,10 +906,11 @@ func trimBeforePublicCoreTerm(query string, text string) string {
 }
 
 func withEvidenceStatus(text string, status string) string {
-	if status == "" || strings.Contains(strings.ToLower(text), "evidence status:") {
+	lower := strings.ToLower(text)
+	if status == "" || strings.Contains(lower, "evidence status:") || strings.Contains(lower, "estado de evidencia:") {
 		return text
 	}
-	return fmt.Sprintf("%s\n\nEvidence status: %s", text, status)
+	return fmt.Sprintf("%s\n\nEstado de evidencia: %s", text, status)
 }
 
 func evidenceStatusFromAnswer(answer string) string {
@@ -874,11 +929,24 @@ func looksLikeTitleOnly(text string) bool {
 	if text == "" {
 		return true
 	}
+	if isQuestionTitle(text) {
+		return true
+	}
 	if strings.Contains(text, "\n\n") || len([]rune(text)) > 220 {
 		return false
 	}
 	terminal := strings.HasSuffix(text, ".") || strings.HasSuffix(text, "!") || strings.HasSuffix(text, "?")
 	return !terminal || strings.Contains(strings.ToLower(text), " - wikipedia") || strings.Contains(strings.ToLower(text), " | ")
+}
+
+func isQuestionTitle(text string) bool {
+	normalized := normalizeBasicChat(text)
+	return strings.HasPrefix(normalized, "quien ") ||
+		strings.HasPrefix(normalized, "que ") ||
+		strings.HasPrefix(normalized, "como ") ||
+		strings.HasPrefix(normalized, "what ") ||
+		strings.HasPrefix(normalized, "who ") ||
+		strings.HasPrefix(normalized, "how ")
 }
 
 func publicWebSourceAllowed(source memory.WebSource) bool {

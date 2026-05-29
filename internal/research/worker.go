@@ -309,6 +309,13 @@ func answerFromSources(query string, report ResearchResult) string {
 		if sourceTitle == "" {
 			sourceTitle = strings.TrimSpace(source.Title)
 		}
+		if candidate := canonicalClaimAnswer(query, source.Snippet); candidate != "" && !likelyTitle(candidate) {
+			score := int(overlapScore(queryTokens, keywordSet(candidate)) * 100)
+			if score > bestScore {
+				best = candidate
+				bestScore = score
+			}
+		}
 		for _, claim := range source.Claims {
 			text := strings.TrimSpace(claim.Text)
 			if text == "" || strings.EqualFold(text, sourceTitle) || likelyTitle(text) {
@@ -424,7 +431,21 @@ func likelyTitle(text string) bool {
 	if text == "" || len([]rune(text)) > 220 {
 		return false
 	}
+	if questionLikeTitle(text) {
+		return true
+	}
 	return !strings.HasSuffix(text, ".") || strings.Contains(text, " - ") || strings.Contains(text, " | ")
+}
+
+func questionLikeTitle(text string) bool {
+	normalized := NormalizeIntentText(text)
+	normalized = strings.Trim(normalized, "¿? ")
+	return strings.HasPrefix(normalized, "quien ") ||
+		strings.HasPrefix(normalized, "que ") ||
+		strings.HasPrefix(normalized, "como ") ||
+		strings.HasPrefix(normalized, "who ") ||
+		strings.HasPrefix(normalized, "what ") ||
+		strings.HasPrefix(normalized, "how ")
 }
 
 var researchYearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)

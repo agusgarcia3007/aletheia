@@ -555,6 +555,45 @@ func TestCompletedResearchAnswerStripsPageChrome(t *testing.T) {
 	}
 }
 
+func TestCompletedResearchAnswerDoesNotUseQuestionTitleAsAnswer(t *testing.T) {
+	store := newTestStore(t)
+	job, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{
+		ID:         "research-worldcup",
+		Query:      "quien gano el mundial brasil 2014?",
+		Status:     "completed",
+		Mode:       "background",
+		MaxSources: 2,
+		Answer:     "¿Quién ganó y qué pasó en el Mundial 2014?\n\nEvidence status: web_verified",
+		Confidence: 0.8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertWebSource(contextBackground(), memory.WebSource{
+		ID:          "source-worldcup",
+		JobID:       job.ID,
+		URL:         "https://sports.example.com/mundial-2014",
+		FinalURL:    "https://sports.example.com/mundial-2014",
+		Title:       "¿Quién ganó y qué pasó en el Mundial 2014?",
+		Snippet:     "Alemania ganó el Mundial Brasil 2014 tras vencer 1-0 a Argentina en la final.",
+		Status:      "stored",
+		ContentHash: "wc",
+		TrustScore:  0.8,
+		ByteSize:    10,
+		ContentType: "text/html",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, Options{APIKey: "secret", Store: store, Research: research.Options{Enabled: true, AutoOnKnowledgeGap: true, MinTrustScore: 0.35}})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"quien gano el mundial brasil 2014?"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Alemania ganó") || strings.Contains(rec.Body.String(), "¿Quién ganó y qué pasó") || strings.Contains(rec.Body.String(), "Evidence status") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestJobsHideFailedByDefault(t *testing.T) {
 	store := newTestStore(t)
 	if _, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{ID: "failed-job", Query: "bad", Status: "failed", Mode: "background"}); err != nil {
