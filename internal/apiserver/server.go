@@ -997,6 +997,10 @@ func effectiveUserQuery(messages []chatMessage) string {
 	if last == "" {
 		return ""
 	}
+	// Interop with clients that pack conversation context into a single user
+	// message (e.g. "... Current user message:\n<question>"). Aletheia routes on
+	// the real question, not the wrapper boilerplate, so unwrap it.
+	last = unwrapPackedUserMessage(last)
 	if !isContextualFollowup(last) {
 		return last
 	}
@@ -1005,6 +1009,34 @@ func effectiveUserQuery(messages []chatMessage) string {
 		return last
 	}
 	return strings.TrimSpace(previous + " " + last)
+}
+
+// unwrapPackedUserMessage extracts the real question from a context-packed user
+// message. Clients sometimes prepend instructions and history and end with a
+// "Current user message:" marker; routing must key on the question that follows
+// it, not the English wrapper. Returns the input unchanged when no marker is
+// present.
+func unwrapPackedUserMessage(text string) string {
+	lower := strings.ToLower(text)
+	markers := []string{"current user message:", "mensaje actual del usuario:"}
+	best := -1
+	bestLen := 0
+	for _, m := range markers {
+		if idx := strings.LastIndex(lower, m); idx >= 0 {
+			if idx > best {
+				best = idx
+				bestLen = len(m)
+			}
+		}
+	}
+	if best < 0 {
+		return text
+	}
+	extracted := strings.TrimSpace(text[best+bestLen:])
+	if extracted == "" {
+		return text
+	}
+	return extracted
 }
 
 func previousUserMessage(messages []chatMessage) string {
