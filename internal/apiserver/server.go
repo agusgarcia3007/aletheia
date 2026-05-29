@@ -80,6 +80,24 @@ func (s *Server) expert(name string) {
 	}
 }
 
+// recordRouterExample persists a verified routing label produced by a
+// deterministic guardrail/answerer. These become self-improvement signal for
+// the router via `aletheia learn`. Deduped by normalized text so repeated
+// queries do not bloat memory.
+func (s *Server) recordRouterExample(query string, intent router.Intent) {
+	if s.store == nil || strings.TrimSpace(query) == "" {
+		return
+	}
+	if intent == "" || intent == router.IntentUnknown {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{"text": query, "intent": string(intent)})
+	if err != nil {
+		return
+	}
+	_, _ = s.store.EnsureNode(context.Background(), "router_example", "router:"+router.Normalize(query), string(payload))
+}
+
 func expertForIntent(intent router.Intent) string {
 	switch intent {
 	case router.IntentSmalltalk:
@@ -372,6 +390,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// the weak router misclassify it as smalltalk or emit generation noise.
 		content := "No entiendo bien tu mensaje. ¿Podés reformularlo? Puedo ayudar con código, cálculos, traducciones cortas, herramientas tipo OpenCode o preguntas con evidencia."
 		s.expert("nonsense")
+		s.recordRouterExample(query, router.IntentAbstain)
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	} else if isAmbiguousFollowup(lastUserMessage(req.Messages)) {
@@ -391,6 +410,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	forceEvidence := query != "" && isFactualKnowledgeQuestion(query)
+	if forceEvidence {
+		// Verified label: a world-knowledge question routes to research, however
+		// it is ultimately answered/abstained below.
+		s.recordRouterExample(query, router.IntentFactualResearch)
+	}
 	if !forceEvidence {
 		if local, ok, err := s.answerers.Answer(r.Context(), answerer.Request{
 			Query:    query,
@@ -402,6 +426,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		} else if ok {
 			s.expert(expertForIntent(local.Intent))
+			s.recordRouterExample(query, local.Intent)
 			respond(s.chatResponse(responseModelID(req.Model, served.ID), local.Content, s.textUsage(prompt, local.Content)))
 			return
 		}
@@ -449,6 +474,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if query != "" && isUnsupportedFutureOutcomeQuestion(query) {
 		content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
 		s.expert("future_abstain")
+		s.recordRouterExample(query, router.IntentAbstain)
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
@@ -501,6 +527,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if query != "" && (isFactualKnowledgeQuestion(query) || isResearchIntent(decision.Intent)) {
 		content := "No tengo evidencia local suficiente para responder eso de forma confiable. Si habilitas research, puedo buscar fuentes y guardar la evidencia para futuras preguntas."
 		s.expert("factual_abstain")
+		s.recordRouterExample(query, router.IntentFactualResearch)
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}

@@ -27,7 +27,10 @@ func TestShippedGoKnowledgeParses(t *testing.T) {
 			}
 			checked++
 			if !goSnippetParses(block.Code) {
-				t.Errorf("invalid Go in %s:\n%s", path, block.Code)
+				t.Errorf("Go does not parse in %s:\n%s", path, block.Code)
+			}
+			if ok, hard := goSnippetTypeChecks(block.Code); !ok {
+				t.Errorf("Go fails type-check in %s: %v\n%s", path, hard, block.Code)
 			}
 		}
 		return nil

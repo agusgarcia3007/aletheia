@@ -1207,18 +1207,22 @@ func runLearn(args []string) error {
 	suitePath := fs.String("suite", "", "optional evaluation suite path")
 	outDir := fs.String("out", "", "generated dataset output directory")
 	trainSelectorOut := fs.String("train-selector-out", "", "optional selector checkpoint output directory")
+	trainRouterOut := fs.String("train-router-out", "", "optional router checkpoint output directory (promotes only if not worse)")
+	routerBaseDataset := fs.String("router-base-dataset", "datasets/router_mikros.jsonl", "base router dataset combined with harvested real-usage examples")
 	epochs := fs.Int("epochs", 300, "selector training epochs when --train-selector-out is set")
 	learningRate := fs.Float64("learning-rate", 0.1, "selector learning rate when --train-selector-out is set")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	report, err := learning.Run(context.Background(), learning.Options{
-		DBPath:           *dbPath,
-		SuitePath:        *suitePath,
-		OutDir:           *outDir,
-		TrainSelectorOut: *trainSelectorOut,
-		Epochs:           *epochs,
-		LearningRate:     *learningRate,
+		DBPath:            *dbPath,
+		SuitePath:         *suitePath,
+		OutDir:            *outDir,
+		TrainSelectorOut:  *trainSelectorOut,
+		TrainRouterOut:    *trainRouterOut,
+		RouterBaseDataset: *routerBaseDataset,
+		Epochs:            *epochs,
+		LearningRate:      *learningRate,
 	})
 	if err != nil {
 		return err
@@ -1234,6 +1238,16 @@ func runLearn(args []string) error {
 	if report.SelectorCheckpoint != "" {
 		fmt.Printf("selector_checkpoint: %s\n", report.SelectorCheckpoint)
 		fmt.Printf("selector_final_accuracy: %.4f\n", report.SelectorTrainReport.FinalAccuracy)
+	}
+	fmt.Printf("router_examples: %d\n", report.RouterExamples)
+	if *trainRouterOut != "" {
+		fmt.Printf("router_base_accuracy: %.4f\n", report.RouterBaseAccuracy)
+		fmt.Printf("router_candidate_accuracy: %.4f\n", report.RouterCandidateAcc)
+		fmt.Printf("router_promoted: %v\n", report.RouterPromoted)
+		fmt.Printf("router_promotion: %s\n", report.RouterPromotionReason)
+		if report.RouterCheckpoint != "" {
+			fmt.Printf("router_checkpoint: %s\n", report.RouterCheckpoint)
+		}
 	}
 	if *suitePath != "" {
 		fmt.Printf("eval_before_verified_success_rate: %.4f\n", report.EvalBefore.VerifiedSuccessRate)

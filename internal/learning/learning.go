@@ -11,16 +11,19 @@ import (
 
 	"aletheia/internal/eval"
 	"aletheia/internal/memory"
+	"aletheia/internal/router"
 	"aletheia/internal/selector"
 )
 
 type Options struct {
-	DBPath           string
-	SuitePath        string
-	OutDir           string
-	TrainSelectorOut string
-	Epochs           int
-	LearningRate     float64
+	DBPath            string
+	SuitePath         string
+	OutDir            string
+	TrainSelectorOut  string
+	TrainRouterOut    string
+	RouterBaseDataset string
+	Epochs            int
+	LearningRate      float64
 }
 
 type Report struct {
@@ -36,6 +39,13 @@ type Report struct {
 	SkillsPath            string               `json:"skills_path"`
 	SelectorCheckpoint    string               `json:"selector_checkpoint,omitempty"`
 	SelectorTrainReport   selector.TrainReport `json:"selector_train_report,omitempty"`
+	RouterExamples        int                  `json:"router_examples"`
+	RouterDatasetPath     string               `json:"router_dataset_path,omitempty"`
+	RouterCheckpoint      string               `json:"router_checkpoint,omitempty"`
+	RouterPromoted        bool                 `json:"router_promoted"`
+	RouterBaseAccuracy    float64              `json:"router_base_accuracy"`
+	RouterCandidateAcc    float64              `json:"router_candidate_accuracy"`
+	RouterPromotionReason string               `json:"router_promotion_reason,omitempty"`
 	EvalBefore            eval.Metrics         `json:"eval_before"`
 	EvalAfter             eval.Metrics         `json:"eval_after"`
 }
@@ -63,6 +73,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		SelectorDatasetPath:   filepath.Join(opts.OutDir, "selector_examples.jsonl"),
 		TrajectoryDatasetPath: filepath.Join(opts.OutDir, "verified_trajectories.jsonl"),
 		ResearchDatasetPath:   filepath.Join(opts.OutDir, "research_answers.jsonl"),
+		RouterDatasetPath:     filepath.Join(opts.OutDir, "router_examples.jsonl"),
 		SkillsPath:            filepath.Join(opts.OutDir, "skills.json"),
 	}
 	if opts.SuitePath != "" {
@@ -122,6 +133,24 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		return Report{}, err
 	}
 
+	// Harvest router examples produced by the deterministic guardrails during
+	// real chat. These are verified labels (when a guardrail fires, the intent is
+	// known), so they are safe self-improvement signal for the router.
+	routerNodes, err := store.GraphNodes(ctx, "router_example")
+	if err != nil {
+		return Report{}, err
+	}
+	report.RouterExamples, err = writeNodePayloadJSONL(report.RouterDatasetPath, routerNodes, nil)
+	if err != nil {
+		return Report{}, err
+	}
+
+	if opts.TrainRouterOut != "" {
+		if err := trainAndPromoteRouter(opts, &report); err != nil {
+			return Report{}, err
+		}
+	}
+
 	if opts.TrainSelectorOut != "" && report.SelectorExamples > 0 {
 		examples, err := selector.LoadTrainingExamples(report.SelectorDatasetPath)
 		if err != nil {
@@ -149,6 +178,83 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		report.EvalAfter = after.Metrics
 	}
 	return report, nil
+}
+
+// trainAndPromoteRouter trains a candidate router on (base corpus + harvested
+// real-usage examples) and promotes it only if it does not regress on a shared
+// held-out set versus a baseline trained on the base corpus alone. This is the
+// verifier-first promotion gate applied to routing: never ship a worse model.
+func trainAndPromoteRouter(opts Options, report *Report) error {
+	base := []router.TrainingExample{}
+	if strings.TrimSpace(opts.RouterBaseDataset) != "" {
+		loaded, err := router.LoadTrainingExamples(opts.RouterBaseDataset)
+		if err != nil {
+			return fmt.Errorf("load router base dataset: %w", err)
+		}
+		base = loaded
+	}
+	harvested := []router.TrainingExample{}
+	if report.RouterExamples > 0 {
+		loaded, err := router.LoadTrainingExamples(report.RouterDatasetPath)
+		if err != nil {
+			return fmt.Errorf("load harvested router examples: %w", err)
+		}
+		harvested = loaded
+	}
+	if len(harvested) == 0 {
+		report.RouterPromotionReason = "no harvested examples; nothing new to learn"
+		return nil
+	}
+	combined := append(append([]router.TrainingExample{}, base...), harvested...)
+	if len(combined) < 5 {
+		report.RouterPromotionReason = "too few examples to evaluate a promotion"
+		return nil
+	}
+
+	// Shared held-out set from the combined data (deterministic stride).
+	var trainSet, valSet []router.TrainingExample
+	for i, ex := range combined {
+		if i%5 == 0 {
+			valSet = append(valSet, ex)
+		} else {
+			trainSet = append(trainSet, ex)
+		}
+	}
+	epochs := opts.Epochs
+	if epochs <= 0 {
+		epochs = 120
+	}
+	trainOpts := router.TrainOptions{Epochs: epochs, LearningRate: 0.2, MinConfidence: 0.35, PruneMinCount: 2}
+
+	candidate, _, err := router.TrainLinear(trainSet, trainOpts)
+	if err != nil {
+		return err
+	}
+	baseline, _, err := router.TrainLinear(base, trainOpts)
+	if err != nil {
+		// No usable baseline (e.g. empty base): fall back to promoting candidate.
+		baseline = candidate
+	}
+
+	report.RouterCandidateAcc = candidate.Accuracy(valSet)
+	report.RouterBaseAccuracy = baseline.Accuracy(valSet)
+	if report.RouterCandidateAcc+1e-9 >= report.RouterBaseAccuracy {
+		// Train the promoted artifact on ALL combined data (train + val).
+		promoted, _, err := router.TrainLinear(combined, trainOpts)
+		if err != nil {
+			return err
+		}
+		if err := promoted.Save(opts.TrainRouterOut); err != nil {
+			return err
+		}
+		report.RouterCheckpoint = opts.TrainRouterOut
+		report.RouterPromoted = true
+		report.RouterPromotionReason = fmt.Sprintf("candidate %.3f >= base %.3f on held-out set", report.RouterCandidateAcc, report.RouterBaseAccuracy)
+	} else {
+		report.RouterPromoted = false
+		report.RouterPromotionReason = fmt.Sprintf("candidate %.3f < base %.3f; kept current router", report.RouterCandidateAcc, report.RouterBaseAccuracy)
+	}
+	return nil
 }
 
 func writeNodePayloadJSONL(path string, nodes []memory.Node, keep func(map[string]any) bool) (int, error) {

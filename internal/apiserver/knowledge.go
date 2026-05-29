@@ -133,10 +133,13 @@ func verifyLearnedCoding(query, answer string) string {
 		if b.Lang != "go" && !(b.Lang == "" && mentionsGo) {
 			continue
 		}
-		if goSnippetParses(b.Code) {
-			return answer + "\n\n(Código Go verificado: parsea correctamente.)"
+		if ok, _ := goSnippetTypeChecks(b.Code); ok {
+			return answer + "\n\n(Código Go verificado: pasa el type-checker.)"
 		}
-		return answer + "\n\n(Aprendido de la web; el código Go no pasó el parser, tomalo con cuidado.)"
+		if goSnippetParses(b.Code) {
+			return answer + "\n\n(Aprendido de la web; el código Go parsea pero no pasa el type-checker, revisalo.)"
+		}
+		return answer + "\n\n(Aprendido de la web; el código Go no parsea, tomalo con cuidado.)"
 	}
 	return answer
 }

@@ -1,0 +1,78 @@
+project:
+  name: aletheia-mu
+  data_dir: ./data
+  checkpoint_dir: ./checkpoints
+  memory_db: ./data/memory.sqlite
+
+model:
+  name: aletheia-mikros-moe
+  vocab_size: 8192
+  context_length: 1024
+  n_layers: 12
+  n_heads: 8
+  d_model: 512
+  d_ff: 2048
+  dropout: 0.0
+  rope: true
+  norm: rmsnorm
+  activation: swiglu
+  seed: 31
+  num_experts: 8
+  top_k_experts: 2
+
+training:
+  batch_size: 8
+  learning_rate: 0.02
+  weight_decay: 0.01
+  max_steps: 2000
+  grad_clip: 1.0
+  checkpoint_every: 250
+  eval_every: 50
+
+inference:
+  temperature: 0.0
+  top_k: 16
+  top_p: 1.0
+  max_tokens: 256
+
+search:
+  strategy: greedy
+  beam_width: 4
+  max_depth: 8
+  budget_seconds: 120
+  budget_tool_calls: 50
+
+verifiers:
+  go_test:
+    enabled: true
+    command: "go test ./..."
+    timeout_seconds: 60
+
+memory:
+  chunk_size: 1200
+  chunk_overlap: 200
+  max_file_bytes: 524288
+  embedding: hashing
+  graph_enabled: true
+
+research:
+  enabled: false
+  auto_on_knowledge_gap: false
+  background_jobs_enabled: true
+  provider: searxng
+  searxng_url: "http://searxng:8080"
+  max_sources: 5
+  max_fetch_bytes: 1048576
+  fetch_timeout_seconds: 10
+  job_timeout_seconds: 120
+  min_sources_for_verified: 2
+  min_trust_score: 0.35
+  store_raw_html: false
+  user_agent: "AletheiaResearchBot/0.1"
+  blocked_domains:
+    - "facebook.com"
+    - "instagram.com"
+    - "tiktok.com"
+    - "x.com"
+    - "twitter.com"
+  allowed_domains: []

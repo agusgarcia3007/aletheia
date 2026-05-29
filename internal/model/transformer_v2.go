@@ -28,6 +28,17 @@ type TransformerV2Layer struct {
 	FFDown   []float32
 	AttnNorm []float32
 	FFNNorm  []float32
+	// Mixture-of-Experts feed-forward (active when len(Experts) > 0). MoEGate is
+	// the [DModel x NumExperts] router; each expert is its own SwiGLU FFN.
+	MoEGate []float32
+	Experts []ffnExpert
+}
+
+// ffnExpert is a single SwiGLU feed-forward expert in a MoE layer.
+type ffnExpert struct {
+	Gate []float32 // DModel x DFF
+	Up   []float32 // DModel x DFF
+	Down []float32 // DFF x DModel
 }
 
 func NewTransformerV2(cfg Config) (*TransformerV2, error) {
@@ -68,7 +79,7 @@ func NewTransformerV2(cfg Config) (*TransformerV2, error) {
 		LMHead:    init(cfg.DModel * cfg.VocabSize),
 	}
 	for i := range m.Layers {
-		m.Layers[i] = TransformerV2Layer{
+		layer := TransformerV2Layer{
 			Q:        init(cfg.DModel * cfg.DModel),
 			K:        init(cfg.DModel * cfg.DModel),
 			V:        init(cfg.DModel * cfg.DModel),
@@ -79,8 +90,33 @@ func NewTransformerV2(cfg Config) (*TransformerV2, error) {
 			AttnNorm: ones(cfg.DModel),
 			FFNNorm:  ones(cfg.DModel),
 		}
+		if cfg.NumExperts > 1 {
+			layer.MoEGate = init(cfg.DModel * cfg.NumExperts)
+			layer.Experts = make([]ffnExpert, cfg.NumExperts)
+			for e := range layer.Experts {
+				layer.Experts[e] = ffnExpert{
+					Gate: init(cfg.DModel * cfg.DFF),
+					Up:   init(cfg.DModel * cfg.DFF),
+					Down: init(cfg.DFF * cfg.DModel),
+				}
+			}
+		}
+		m.Layers[i] = layer
 	}
 	return m, nil
+}
+
+// topKExperts returns the configured number of experts to activate per token,
+// clamped to [1, NumExperts]. Defaults to 2 (DeepSeek-style sparse routing).
+func (m *TransformerV2) topKExperts() int {
+	k := m.Config.TopKExperts
+	if k <= 0 {
+		k = 2
+	}
+	if k > m.Config.NumExperts {
+		k = m.Config.NumExperts
+	}
+	return k
 }
 
 func (m *TransformerV2) Forward(tokens []int) ([][]float32, error) {
@@ -167,16 +203,111 @@ func (m *TransformerV2) forwardLayer(layer TransformerV2Layer, x [][]float32) ([
 		attn := matVec(context, layer.O, dim)
 		hidden := addVectors(x[pos], attn)
 		ffNorm := scaleVector(tensor.RMSNorm(hidden, 1e-5), layer.FFNNorm)
-		gate := matVec(ffNorm, layer.FFGate, m.Config.DFF)
-		up := matVec(ffNorm, layer.FFUp, m.Config.DFF)
+		var ff []float32
+		var ffErr error
+		if len(layer.Experts) > 0 {
+			ff, ffErr = m.moeFeedForward(layer, ffNorm)
+		} else {
+			ff, ffErr = denseFeedForward(layer, ffNorm, m.Config.DFF, dim)
+		}
+		if ffErr != nil {
+			return nil, ffErr
+		}
+		out[pos] = addVectors(hidden, ff)
+	}
+	return out, nil
+}
+
+func denseFeedForward(layer TransformerV2Layer, ffNorm []float32, dff, dim int) ([]float32, error) {
+	gate := matVec(ffNorm, layer.FFGate, dff)
+	up := matVec(ffNorm, layer.FFUp, dff)
+	activated, err := tensor.SwiGLU(gate, up)
+	if err != nil {
+		return nil, err
+	}
+	return matVec(activated, layer.FFDown, dim), nil
+}
+
+// moeFeedForward routes the token to its top-k experts via the gating network
+// and returns the gate-weighted combination of their outputs. This is sparse
+// activation: only k of NumExperts experts run per token, which is what makes a
+// large expert pool efficient (DeepSeek-style MoE).
+func (m *TransformerV2) moeFeedForward(layer TransformerV2Layer, ffNorm []float32) ([]float32, error) {
+	dim := m.Config.DModel
+	dff := m.Config.DFF
+	logits := matVec(ffNorm, layer.MoEGate, m.Config.NumExperts)
+	probs, err := tensor.Softmax(logits)
+	if err != nil {
+		return nil, err
+	}
+	chosen := topKIndices(probs, m.topKExperts())
+	var norm float32
+	for _, idx := range chosen {
+		norm += probs[idx]
+	}
+	if norm == 0 {
+		norm = 1
+	}
+	out := make([]float32, dim)
+	for _, idx := range chosen {
+		weight := probs[idx] / norm
+		expert := layer.Experts[idx]
+		gate := matVec(ffNorm, expert.Gate, dff)
+		up := matVec(ffNorm, expert.Up, dff)
 		activated, err := tensor.SwiGLU(gate, up)
 		if err != nil {
 			return nil, err
 		}
-		ff := matVec(activated, layer.FFDown, dim)
-		out[pos] = addVectors(hidden, ff)
+		ff := matVec(activated, expert.Down, dim)
+		for i := range out {
+			out[i] += weight * ff[i]
+		}
 	}
 	return out, nil
+}
+
+// topKIndices returns the indices of the k largest values (ties broken by lower
+// index for determinism).
+func topKIndices(values []float32, k int) []int {
+	if k > len(values) {
+		k = len(values)
+	}
+	chosen := make([]int, 0, k)
+	used := make([]bool, len(values))
+	for n := 0; n < k; n++ {
+		best := -1
+		for i := range values {
+			if used[i] {
+				continue
+			}
+			if best == -1 || values[i] > values[best] {
+				best = i
+			}
+		}
+		if best == -1 {
+			break
+		}
+		used[best] = true
+		chosen = append(chosen, best)
+	}
+	return chosen
+}
+
+// MoEAuxLoss computes the standard load-balancing auxiliary loss given, for a
+// batch, the fraction of tokens dispatched to each expert and the mean gate
+// probability of each expert. Minimizing it spreads load across experts. It is
+// a pure function so it is ready to wire into training without changing the
+// forward path.
+func MoEAuxLoss(tokenFraction, meanGateProb []float32) float32 {
+	n := len(tokenFraction)
+	if n == 0 || n != len(meanGateProb) {
+		return 0
+	}
+	var loss float32
+	for i := 0; i < n; i++ {
+		loss += tokenFraction[i] * meanGateProb[i]
+	}
+	return loss * float32(n)
 }
 
 func matVec(x []float32, weights []float32, outDim int) []float32 {

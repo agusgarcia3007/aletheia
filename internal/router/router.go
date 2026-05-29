@@ -307,6 +307,17 @@ func (r LinearRouter) Route(input Input) RouteDecision {
 	return RouteDecision{Intent: best, Confidence: bestProb, Reason: "linear router", Features: topFeatures(features, 8)}
 }
 
+// Accuracy reports the fraction of examples the router routes to their labeled
+// intent. Used by the learning loop's promotion gate to compare a candidate
+// against the current model on a shared held-out set.
+func (r LinearRouter) Accuracy(examples []TrainingExample) float64 {
+	if len(examples) == 0 {
+		return 0
+	}
+	_, acc := r.evaluate(examples)
+	return acc
+}
+
 func (r LinearRouter) evaluate(examples []TrainingExample) (float64, float64) {
 	var loss float64
 	var correct int

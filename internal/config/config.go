@@ -43,6 +43,11 @@ type ModelConfig struct {
 	Norm          string  `yaml:"norm"`
 	Activation    string  `yaml:"activation"`
 	Seed          int64   `yaml:"seed"`
+	// Mixture-of-Experts: when NumExperts > 1, each TransformerV2 layer's
+	// feed-forward block becomes a sparse MoE (a gating network routes each token
+	// to its TopKExperts experts). NumExperts <= 1 keeps the dense FFN.
+	NumExperts  int `yaml:"num_experts"`
+	TopKExperts int `yaml:"top_k_experts"`
 }
 
 type TrainingConfig struct {
