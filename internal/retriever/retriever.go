@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -92,6 +93,54 @@ type Answer struct {
 
 type Retriever struct {
 	Store *memory.Store
+	// Cache memoizes per-chunk embedding vectors. Chunk IDs are immutable
+	// (ReplaceChunks deletes and recreates rows with new IDs), so keying by ID
+	// is safe and avoids recomputing hash vectors on every query. Optional: a
+	// zero Retriever still works, just without caching.
+	Cache *EmbeddingCache
+}
+
+// EmbeddingCache is a concurrency-safe memoization of chunk embedding vectors.
+type EmbeddingCache struct {
+	mu  sync.RWMutex
+	vec map[int64][]float64
+}
+
+func NewEmbeddingCache() *EmbeddingCache {
+	return &EmbeddingCache{vec: map[int64][]float64{}}
+}
+
+func (c *EmbeddingCache) get(id int64) ([]float64, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	v, ok := c.vec[id]
+	return v, ok
+}
+
+func (c *EmbeddingCache) put(id int64, v []float64) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.vec[id] = v
+	c.mu.Unlock()
+}
+
+// NewRetriever returns a retriever with an embedding cache enabled.
+func NewRetriever(store *memory.Store) Retriever {
+	return Retriever{Store: store, Cache: NewEmbeddingCache()}
+}
+
+func (r Retriever) chunkVector(id int64, text string) []float64 {
+	if v, ok := r.Cache.get(id); ok {
+		return v
+	}
+	v := hashVector(text)
+	r.Cache.put(id, v)
+	return v
 }
 
 func (i Indexer) IndexPath(ctx context.Context, root string, opts IndexOptions) (IndexReport, error) {
@@ -213,7 +262,7 @@ func (r Retriever) Search(ctx context.Context, query string, opts SearchOptions)
 	hits := make([]Hit, 0, len(chunks))
 	for _, chunk := range chunks {
 		keyword := keywordScore(queryTokens, tokenSet(chunk.Text))
-		semantic := cosine(queryVec, hashVector(chunk.Text))
+		semantic := cosine(queryVec, r.chunkVector(chunk.ID, chunk.Text))
 		graph := 0.05
 		recency := recencyScore(now, chunk.UpdatedAt)
 		trust := trustScore(chunk.Path)

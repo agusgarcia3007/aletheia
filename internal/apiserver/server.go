@@ -43,6 +43,7 @@ type Options struct {
 	Research         research.Options
 	RouterCheckpoint string
 	Router           router.Router
+	KnowledgePath    string
 }
 
 type Server struct {
@@ -55,11 +56,45 @@ type Server struct {
 	research     research.Options
 	chatRouter   router.Router
 	answerers    answerer.Composite
+	retriever    retriever.Retriever
 	created      int64
 	nextID       atomic.Uint64
 	requests     atomic.Uint64
 	chats        atomic.Uint64
 	queued       atomic.Uint64
+	experts      map[string]*atomic.Uint64
+}
+
+// expertNames are the sparse capability "experts": exactly one handles each chat
+// request. Tracking the distribution is the observability side of Aletheia's
+// architectural mixture-of-experts.
+var expertNames = []string{
+	"smalltalk", "math", "coding", "translation", "abstain", "tool_boundary",
+	"tool_call", "nonsense", "ambiguous", "code_generation", "future_abstain",
+	"research_learn", "memory_verified", "factual_abstain", "honest_fallback", "generated",
+}
+
+func (s *Server) expert(name string) {
+	if c := s.experts[name]; c != nil {
+		c.Add(1)
+	}
+}
+
+func expertForIntent(intent router.Intent) string {
+	switch intent {
+	case router.IntentSmalltalk:
+		return "smalltalk"
+	case router.IntentMath:
+		return "math"
+	case router.IntentCodingHelp, router.IntentCodeGeneration:
+		return "coding"
+	case router.IntentTranslation:
+		return "translation"
+	case router.IntentRepoAgent:
+		return "tool_boundary"
+	default:
+		return "abstain"
+	}
 }
 
 func New(opts Options) (*Server, error) {
@@ -80,7 +115,7 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	opts.ModelName = defaultModel
-	return &Server{
+	s := &Server{
 		opts:         opts,
 		defaultModel: defaultModel,
 		modelOrder:   order,
@@ -89,9 +124,25 @@ func New(opts Options) (*Server, error) {
 		store:        opts.Store,
 		research:     opts.Research,
 		chatRouter:   chatRouter,
-		answerers:    answerer.Default(),
+		retriever:    retriever.NewRetriever(opts.Store),
 		created:      time.Now().Unix(),
-	}, nil
+		experts:      map[string]*atomic.Uint64{},
+	}
+	for _, name := range expertNames {
+		s.experts[name] = &atomic.Uint64{}
+	}
+	// Knowledge lives outside the weights: index the local corpus and let the
+	// coding answerer retrieve from it. Without a store, coding stays curated +
+	// honest-miss only.
+	if s.store != nil {
+		if err := s.indexKnowledge(opts.KnowledgePath); err != nil {
+			return nil, fmt.Errorf("index knowledge corpus: %w", err)
+		}
+		s.answerers = answerer.DefaultWithKnowledge(s.codingKnowledgeOrLearn)
+	} else {
+		s.answerers = answerer.Default()
+	}
+	return s, nil
 }
 
 func loadChatRouter(opts Options) (router.Router, error) {
@@ -180,6 +231,9 @@ func normalizeOptions(opts Options) Options {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = DefaultMaxBodyBytes
 	}
+	if opts.KnowledgePath == "" {
+		opts.KnowledgePath = DefaultKnowledgePath
+	}
 	return opts
 }
 
@@ -240,6 +294,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	} else {
 		_, _ = fmt.Fprintf(w, "aletheia_memory_configured 0\n")
 	}
+	// Sparse-expert routing distribution: which capability handled each request.
+	for _, name := range expertNames {
+		_, _ = fmt.Fprintf(w, "aletheia_expert_total{expert=%q} %d\n", name, s.experts[name].Load())
+	}
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
@@ -293,6 +351,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		maxTokens = req.MaxCompletionTokens
 	}
 	if toolCall, ok := s.codingToolCall(served.ID, req); ok {
+		s.expert("tool_call")
 		respond(s.toolCallResponse(responseModelID(req.Model, served.ID), toolCall, s.textUsage(prompt, toolCall.Function.Name)))
 		return
 	}
@@ -302,17 +361,50 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(effectiveUserQuery(req.Messages))
 	decision := s.routeChat(query, req.Messages, req.Tools)
-	if local, ok, err := s.answerers.Answer(r.Context(), answerer.Request{
-		Query:    query,
-		Messages: toRouterMessages(req.Messages),
-		Intent:   decision.Intent,
-		HasTools: len(req.Tools) > 0,
-	}); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "server_error", "", "answerer_failed", err.Error())
+	// Sparse expert routing: exactly one capability expert handles each request,
+	// cheap deterministic experts short-circuit before expensive ones. A math
+	// query is always routed to the math answerer (real computation), regardless
+	// of the still-weak neural router.
+	if query != "" && looksLikeMath(query) {
+		decision.Intent = router.IntentMath
+	} else if query != "" && looksLikeNonsense(query) {
+		// Low-signal/nonsense input: ask for a reformulation instead of letting
+		// the weak router misclassify it as smalltalk or emit generation noise.
+		content := "No entiendo bien tu mensaje. ¿Podés reformularlo? Puedo ayudar con código, cálculos, traducciones cortas, herramientas tipo OpenCode o preguntas con evidencia."
+		s.expert("nonsense")
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
-	} else if ok {
-		respond(s.chatResponse(responseModelID(req.Model, served.ID), local.Content, s.textUsage(prompt, local.Content)))
+	} else if isAmbiguousFollowup(lastUserMessage(req.Messages)) {
+		// Bare "dale"/"continua"/"y eso?" with no usable context: ask for it
+		// instead of repeating a greeting.
+		content := "Necesito un poco mas de contexto para seguir. Decime el tema o la pregunta completa y respondo con evidencia si hace falta."
+		s.expert("ambiguous")
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
+	} else if query != "" && isCodingKnowledgeQuery(query) {
+		// Coding-knowledge questions are answered by the coding answerer (curated
+		// example → retrieved corpus → honest miss), never by research or noise.
+		if isCodeGenerationRequest(normalizeBasicChat(query)) {
+			decision.Intent = router.IntentCodeGeneration
+		} else {
+			decision.Intent = router.IntentCodingHelp
+		}
+	}
+	forceEvidence := query != "" && isFactualKnowledgeQuestion(query)
+	if !forceEvidence {
+		if local, ok, err := s.answerers.Answer(r.Context(), answerer.Request{
+			Query:    query,
+			Messages: toRouterMessages(req.Messages),
+			Intent:   decision.Intent,
+			HasTools: len(req.Tools) > 0,
+		}); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "server_error", "", "answerer_failed", err.Error())
+			return
+		} else if ok {
+			s.expert(expertForIntent(local.Intent))
+			respond(s.chatResponse(responseModelID(req.Model, served.ID), local.Content, s.textUsage(prompt, local.Content)))
+			return
+		}
 	}
 	if reply, ok := policyReply(served.ID, req.Messages); ok {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
@@ -323,37 +415,40 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if query != "" && isChatActionRequest(query) {
-		generated, usage, err := s.generate(served, prompt, generationOptions{
+		if generated, usage, ok := s.safeGenerate(served, prompt, generationOptions{
 			MaxTokens:   maxTokens,
 			Temperature: req.Temperature,
 			TopP:        req.TopP,
 			TopK:        req.TopK,
-		})
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "server_error", "", "generation_failed", err.Error())
+		}); ok {
+			respond(map[string]any{
+				"id":      s.id("chatcmpl"),
+				"object":  "chat.completion",
+				"created": time.Now().Unix(),
+				"model":   responseModelID(req.Model, served.ID),
+				"choices": []map[string]any{
+					{
+						"index": 0,
+						"message": map[string]any{
+							"role":    "assistant",
+							"content": generated,
+						},
+						"finish_reason": "stop",
+					},
+				},
+				"usage": usage,
+			})
 			return
 		}
-		respond(map[string]any{
-			"id":      s.id("chatcmpl"),
-			"object":  "chat.completion",
-			"created": time.Now().Unix(),
-			"model":   responseModelID(req.Model, served.ID),
-			"choices": []map[string]any{
-				{
-					"index": 0,
-					"message": map[string]any{
-						"role":    "assistant",
-						"content": generated,
-					},
-					"finish_reason": "stop",
-				},
-			},
-			"usage": usage,
-		})
+		// Untrained checkpoint or noisy output: ask for the missing detail
+		// instead of fabricating an answer.
+		content := "Puedo ayudarte a generar ese código, pero necesito un poco más de detalle: lenguaje, objetivo concreto y entrada/salida esperada. No voy a inventar una respuesta."
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
 	if query != "" && isUnsupportedFutureOutcomeQuestion(query) {
 		content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
+		s.expert("future_abstain")
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
@@ -374,11 +469,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if query != "" && s.store != nil {
 		if answer, ok := s.completedResearchAnswer(r.Context(), query); ok {
+			s.expert("memory_verified")
 			respond(s.chatResponse(responseModelID(req.Model, served.ID), answer, s.textUsage(prompt, answer)))
 			return
 		}
-		answer, err := (retriever.Retriever{Store: s.store}).Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
+		answer, err := s.retriever.Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
 		if err == nil && answer.Verified {
+			s.expert("memory_verified")
 			respond(s.chatResponse(responseModelID(req.Model, served.ID), answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
 			return
 		}
@@ -390,6 +487,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			job, err := s.enqueueResearch(r.Context(), query, researchMode, 0)
 			if err == nil {
 				content := fmt.Sprintf("No tengo evidencia local suficiente. Inicié una investigación en background con job_id=%s. Consultá el resultado en unos segundos o repetí la pregunta luego.", job.ID)
+				s.expert("research_learn")
 				respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 				return
 			}
@@ -402,6 +500,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if query != "" && (isFactualKnowledgeQuestion(query) || isResearchIntent(decision.Intent)) {
 		content := "No tengo evidencia local suficiente para responder eso de forma confiable. Si habilitas research, puedo buscar fuentes y guardar la evidencia para futuras preguntas."
+		s.expert("factual_abstain")
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
@@ -410,33 +509,36 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
-	generated, usage, err := s.generate(served, prompt, generationOptions{
+	if generated, usage, ok := s.safeGenerate(served, prompt, generationOptions{
 		MaxTokens:   maxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
-	})
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "server_error", "", "generation_failed", err.Error())
+	}); ok {
+		respond(map[string]any{
+			"id":      s.id("chatcmpl"),
+			"object":  "chat.completion",
+			"created": time.Now().Unix(),
+			"model":   responseModelID(req.Model, served.ID),
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": generated,
+					},
+					"finish_reason": "stop",
+				},
+			},
+			"usage": usage,
+		})
+		s.expert("generated")
 		return
 	}
-	respond(map[string]any{
-		"id":      s.id("chatcmpl"),
-		"object":  "chat.completion",
-		"created": time.Now().Unix(),
-		"model":   responseModelID(req.Model, served.ID),
-		"choices": []map[string]any{
-			{
-				"index": 0,
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": generated,
-				},
-				"finish_reason": "stop",
-			},
-		},
-		"usage": usage,
-	})
+	// Last resort: the generative core is not trained/clean yet. Abstain
+	// honestly rather than emit byte-model noise.
+	s.expert("honest_fallback")
+	respond(s.chatResponse(responseModelID(req.Model, served.ID), honestFallback, s.textUsage(prompt, honestFallback)))
 }
 
 func responseModelID(requested string, served string) string {
@@ -1336,15 +1438,65 @@ func isFactualKnowledgeQuestion(query string) bool {
 	if normalized == "" || isChatActionRequest(normalized) || isUnsupportedFutureOutcomeQuestion(normalized) {
 		return false
 	}
-	if hasAny(normalized, "que puedes hacer", "que podes hacer", "que sabes hacer", "ayuda", "help") {
+	// Never treat the agent's own smalltalk/identity/help, coding, or translation
+	// prompts as world-knowledge questions.
+	if isSmalltalkOrIdentity(normalized) || isTranslationRequest(normalized) {
 		return false
 	}
+	if len(detectCodingLanguages(normalized)) > 0 || isCodingTask(normalized) {
+		return false
+	}
+	if looksLikeMath(normalized) {
+		return false
+	}
+	// General, dictionary-free heuristic: an interrogative about the world is a
+	// factual question. This is the default for "who/what/which/when/where/how
+	// many/why" so unseen topics route to evidence/abstention, not to greetings
+	// or free generation.
 	return hasAny(normalized,
-		"quien gano", "quienes ganaron", "quien ganó", "ganador", "campeon", "campeones",
-		"ultima copa", "ultimas copa", "ultimas copas", "copa america", "mundial brasil",
-		"que fue", "que es", "quien fue", "quien es", "cuando fue", "donde fue",
-		"what is", "what was", "who won", "who is", "latest", "last world cup",
+		"quien ", "quienes ", "que ", "cual ", "cuales ",
+		"cuando ", "donde ", "cuanto ", "cuanta ", "cuantos ", "cuantas ", "por que ",
+		"who ", "what ", "which ", "when ", "where ", "how many", "how much", "why ",
+		"ganador", "campeon", "campeones", "copa america", "mundial", "latest",
 	)
+}
+
+// isSmalltalkOrIdentity matches greetings, thanks, farewells, and the agent's
+// own identity/capability questions. These must never be routed as factual.
+func isSmalltalkOrIdentity(normalized string) bool {
+	return hasAny(normalized,
+		"hola", "buenas", "buen dia", "buenos dias", "hello", "hi ", "hey", "que onda", "que tal",
+		"gracias", "thanks", "chau", "adios", "bye", "como estas", "how are you",
+		"quien sos", "quien eres", "que sos", "como te llamas", "tu nombre", "what are you", "who are you", "who built you",
+		"que puedes hacer", "que podes hacer", "que sabes hacer", "what can you do", "ayuda", "help",
+	)
+}
+
+func isTranslationRequest(normalized string) bool {
+	return hasAny(normalized, "traduce", "traduci", "translate", "como se dice", "how do you say")
+}
+
+// looksLikeMath delegates to the answerer's real math detector so routing and
+// the math evaluator stay in sync.
+func looksLikeMath(query string) bool {
+	return answerer.LooksLikeMath(query)
+}
+
+// isCodingKnowledgeQuery reports whether the query is a programming question
+// that should be handled by the coding answerer (curated/retrieved/honest),
+// rather than research or generation. Repo-repair requests are excluded (they
+// go to solve), and named-but-unsupported languages still count so the corpus
+// can answer them.
+func isCodingKnowledgeQuery(query string) bool {
+	normalized := normalizeBasicChat(query)
+	if normalized == "" || isRepoRepairRequest(normalized) {
+		return false
+	}
+	if len(detectCodingLanguages(normalized)) > 0 || isProgrammingHelpRequest(normalized) {
+		return true
+	}
+	return hasProgrammingLanguage(normalized) && hasAny(normalized,
+		"como", "ejemplo", "funcion", "function", "loop", "for", "clase", "class", "metodo", "method")
 }
 
 func isContextualFollowup(query string) bool {
@@ -1360,7 +1512,11 @@ func isContextualFollowup(query string) bool {
 
 func isAmbiguousFollowup(query string) bool {
 	normalized := normalizeBasicChat(query)
-	return normalized == "y entonces" || normalized == "entonces" || normalized == "y ahora" || normalized == "ok y"
+	switch normalized {
+	case "y entonces", "entonces", "y ahora", "ok y", "y eso", "y eso?", "continua", "continúa", "segui", "seguí", "dale", "mas", "y", "ok", "bueno y":
+		return true
+	}
+	return false
 }
 
 var yearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)

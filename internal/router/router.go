@@ -82,18 +82,22 @@ type LinearRouter struct {
 type Features map[string]float64
 
 type TrainOptions struct {
-	Epochs        int
-	LearningRate  float64
-	MinConfidence float64
+	Epochs          int
+	LearningRate    float64
+	MinConfidence   float64
+	ValidationSplit float64
+	PruneMinCount   int
 }
 
 type TrainReport struct {
-	Examples        int
-	Epochs          int
-	InitialAccuracy float64
-	FinalAccuracy   float64
-	InitialLoss     float64
-	FinalLoss       float64
+	Examples           int
+	Epochs             int
+	InitialAccuracy    float64
+	FinalAccuracy      float64
+	InitialLoss        float64
+	FinalLoss          float64
+	ValidationExamples int
+	ValidationAccuracy float64
 }
 
 func NewFallback() Router {
@@ -174,6 +178,9 @@ func TrainLinear(examples []TrainingExample, opts TrainOptions) (LinearRouter, T
 	if opts.MinConfidence <= 0 {
 		opts.MinConfidence = 0.35
 	}
+	// Hold out a validation set so generalization is measured, not just memorized
+	// training accuracy. A split of 0 trains on everything (legacy behavior).
+	trainSet, valSet := splitExamples(examples, opts.ValidationSplit)
 	r := LinearRouter{
 		Intents:       append([]Intent(nil), PublicIntents...),
 		Weights:       map[Intent]Features{},
@@ -183,14 +190,14 @@ func TrainLinear(examples []TrainingExample, opts TrainOptions) (LinearRouter, T
 	for _, intent := range r.Intents {
 		r.Weights[intent] = Features{}
 	}
-	for _, ex := range examples {
+	for _, ex := range trainSet {
 		for feature := range ExtractFeatures(Input{Text: ex.Text, Messages: ex.Messages, HasTools: ex.HasTools, HasLocalEvidence: ex.HasLocalEvidence}) {
 			r.FeatureCounts[feature]++
 		}
 	}
-	initialLoss, initialAccuracy := r.evaluate(examples)
+	initialLoss, initialAccuracy := r.evaluate(trainSet)
 	for epoch := 0; epoch < opts.Epochs; epoch++ {
-		for _, ex := range examples {
+		for _, ex := range trainSet {
 			input := Input{Text: ex.Text, Messages: ex.Messages, HasTools: ex.HasTools, HasLocalEvidence: ex.HasLocalEvidence}
 			features := ExtractFeatures(input)
 			probs := r.probabilities(features)
@@ -206,15 +213,77 @@ func TrainLinear(examples []TrainingExample, opts TrainOptions) (LinearRouter, T
 			}
 		}
 	}
-	finalLoss, finalAccuracy := r.evaluate(examples)
-	return r, TrainReport{
-		Examples:        len(examples),
+	if opts.PruneMinCount > 1 {
+		r.Prune(opts.PruneMinCount)
+	}
+	finalLoss, finalAccuracy := r.evaluate(trainSet)
+	report := TrainReport{
+		Examples:        len(trainSet),
 		Epochs:          opts.Epochs,
 		InitialLoss:     initialLoss,
 		FinalLoss:       finalLoss,
 		InitialAccuracy: initialAccuracy,
 		FinalAccuracy:   finalAccuracy,
-	}, nil
+	}
+	if len(valSet) > 0 {
+		_, valAccuracy := r.evaluate(valSet)
+		report.ValidationExamples = len(valSet)
+		report.ValidationAccuracy = valAccuracy
+	}
+	return r, report, nil
+}
+
+// Prune drops features seen fewer than minCount times from the model. Rare
+// char/word n-grams only fire for a single training example, so they bloat the
+// checkpoint and encourage memorization; removing them shrinks the artifact and
+// improves generalization.
+func (r LinearRouter) Prune(minCount int) {
+	if minCount <= 1 {
+		return
+	}
+	for _, intent := range r.Intents {
+		weights := r.Weights[intent]
+		if weights == nil {
+			continue
+		}
+		for feature := range weights {
+			if feature == "bias" {
+				continue
+			}
+			if r.FeatureCounts[feature] < minCount {
+				delete(weights, feature)
+			}
+		}
+	}
+	for feature, count := range r.FeatureCounts {
+		if count < minCount {
+			delete(r.FeatureCounts, feature)
+		}
+	}
+}
+
+// splitExamples deterministically holds out every k-th example for validation,
+// where k = round(1/split). This keeps the split reproducible (no RNG) and
+// roughly class-balanced. A split <= 0 trains on everything.
+func splitExamples(examples []TrainingExample, split float64) (train, val []TrainingExample) {
+	if split <= 0 || split >= 1 || len(examples) < 5 {
+		return examples, nil
+	}
+	k := int(1.0/split + 0.5)
+	if k < 2 {
+		k = 2
+	}
+	for i, ex := range examples {
+		if i%k == 0 {
+			val = append(val, ex)
+		} else {
+			train = append(train, ex)
+		}
+	}
+	if len(train) == 0 {
+		return examples, nil
+	}
+	return train, val
 }
 
 func (r LinearRouter) Route(input Input) RouteDecision {

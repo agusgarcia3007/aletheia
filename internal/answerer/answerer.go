@@ -34,13 +34,26 @@ type Composite struct {
 	Answerers []Answerer
 }
 
+// KnowledgeFunc retrieves a verified worked answer from an external, citable
+// knowledge base (e.g. an indexed coding corpus). It is the "knowledge lives
+// outside the weights" path: returns the answer text, a citation, and ok=false
+// when nothing relevant is found (so the caller abstains honestly).
+type KnowledgeFunc func(ctx context.Context, query string) (answer string, citation string, ok bool)
+
 func Default() Composite {
+	return DefaultWithKnowledge(nil)
+}
+
+// DefaultWithKnowledge wires a retrieval hook into the coding answerer so unseen
+// coding tasks are answered from a citable corpus instead of a hardcoded map or
+// a fabricated snippet.
+func DefaultWithKnowledge(k KnowledgeFunc) Composite {
 	return Composite{Answerers: []Answerer{
 		ToolAgentAnswerer{},
 		SmalltalkAnswerer{},
 		MathAnswerer{},
 		TranslationAnswerer{},
-		CodingAnswerer{},
+		CodingAnswerer{Knowledge: k},
 		AbstainAnswerer{},
 	}}
 }
@@ -112,8 +125,8 @@ func (ToolAgentAnswerer) Answer(_ context.Context, req Request) (Response, error
 type MathAnswerer struct{}
 
 func (MathAnswerer) CanAnswer(_ context.Context, req Request) (float64, Reason) {
-	if req.Intent == router.IntentMath && parseArithmetic(req.Query).ok {
-		return 0.95, "simple arithmetic"
+	if req.Intent == router.IntentMath && (parseArithmetic(req.Query).ok || LooksLikeMath(req.Query)) {
+		return 0.95, "math query"
 	}
 	return 0, ""
 }
@@ -121,7 +134,12 @@ func (MathAnswerer) CanAnswer(_ context.Context, req Request) (float64, Reason) 
 func (MathAnswerer) Answer(_ context.Context, req Request) (Response, error) {
 	op := parseArithmetic(req.Query)
 	if !op.ok {
-		return Response{Content: "Puedo calcular operaciones simples si me das una expresión concreta, por ejemplo `17 por 23`.", Intent: router.IntentMath, Reason: "math needs expression"}, nil
+		// Beyond two-operand arithmetic: percentages, powers, roots, linear
+		// equations and general expressions are computed for real.
+		if answer, ok := EvaluateMath(req.Query); ok {
+			return Response{Content: answer, Intent: router.IntentMath, Reason: "computed math"}, nil
+		}
+		return Response{Content: "Puedo calcular operaciones simples si me das una expresión concreta, por ejemplo `17 por 23` o `15% de 200`.", Intent: router.IntentMath, Reason: "math needs expression"}, nil
 	}
 	var result int
 	switch op.op {
@@ -201,7 +219,9 @@ func (TranslationAnswerer) Answer(_ context.Context, req Request) (Response, err
 	return Response{Content: "La frase es demasiado larga para mi traductor local básico. Dividila en una oración corta.", Intent: router.IntentTranslation, Reason: "translation too long"}, nil
 }
 
-type CodingAnswerer struct{}
+type CodingAnswerer struct {
+	Knowledge KnowledgeFunc
+}
 
 func (CodingAnswerer) CanAnswer(_ context.Context, req Request) (float64, Reason) {
 	if req.Intent == router.IntentCodingHelp || req.Intent == router.IntentCodeGeneration {
@@ -210,23 +230,61 @@ func (CodingAnswerer) CanAnswer(_ context.Context, req Request) (float64, Reason
 	return 0, ""
 }
 
-func (CodingAnswerer) Answer(_ context.Context, req Request) (Response, error) {
+func (c CodingAnswerer) Answer(ctx context.Context, req Request) (Response, error) {
 	query := normalize(req.Query)
 	slots := detectCodingSlots(query)
 	if slots.Language == "" {
+		if slots.Unsupported != "" {
+			// A language we don't hardcode: the corpus is how language support
+			// grows without code changes. Try retrieval before declining.
+			if c.Knowledge != nil {
+				if answer, citation, ok := c.Knowledge(ctx, req.Query); ok {
+					content := answer
+					if citation != "" {
+						content += "\n\nFuente: " + citation
+					}
+					return Response{Content: content, Intent: router.IntentCodingHelp, Reason: "retrieved coding knowledge"}, nil
+				}
+			}
+			return Response{
+				Content: fmt.Sprintf("Por ahora manejo con solidez Python, JavaScript/TypeScript, Go, Rust, SQL y React. Para %s te puedo dar orientación general, pero no quiero darte un ejemplo que no esté verificado. ¿Querés que lo planteemos con uno de los lenguajes que sí domino?", slots.Unsupported),
+				Intent:  router.IntentCodingHelp,
+				Reason:  "unsupported coding language",
+			}, nil
+		}
 		return Response{Content: "Puedo ayudar con codigo, pero necesito el lenguaje y el objetivo. Ejemplo: `en Python, lee un CSV y filtra filas por estado`.", Intent: router.IntentCodingHelp, Reason: "missing coding language"}, nil
 	}
-	content := codingResponse(slots)
-	if content == "" {
-		content = genericCodingResponse(slots)
+	// Curated worked example for a recognized (language, task) pair.
+	if content := codingResponse(slots); content != "" {
+		return Response{Content: content, Intent: req.Intent, Reason: "verified worked example"}, nil
 	}
-	return Response{Content: content, Intent: req.Intent, Reason: "parametric coding answer"}, nil
+	// Genuine "introduce me to the language" request: base description + minimal
+	// example is an honest answer to what was asked.
+	if slots.Task == "intro" {
+		return Response{Content: genericCodingResponse(slots), Intent: req.Intent, Reason: "language overview"}, nil
+	}
+	// Specific task without a curated example: try the external citable knowledge
+	// base before giving up. This is the retrieval-first path — knowledge lives
+	// outside the weights, not in a hardcoded map.
+	if c.Knowledge != nil {
+		if answer, citation, ok := c.Knowledge(ctx, req.Query); ok {
+			content := answer
+			if citation != "" {
+				content += "\n\nFuente: " + citation
+			}
+			return Response{Content: content, Intent: req.Intent, Reason: "retrieved coding knowledge"}, nil
+		}
+	}
+	// No curated example and nothing retrieved: do NOT fabricate an unrelated
+	// snippet. Be honest and ask for the missing detail.
+	return Response{Content: honestCodingMiss(slots), Intent: req.Intent, Reason: "coding task without verified example"}, nil
 }
 
 type codingSlots struct {
-	Language string
-	Task     string
-	Subject  string
+	Language    string
+	Task        string
+	Subject     string
+	Unsupported string
 }
 
 func detectCodingSlots(query string) codingSlots {
@@ -267,10 +325,55 @@ func detectCodingSlots(query string) codingSlots {
 		s.Task = "function"
 	case hasAny(query, "diferencia", "compar", " vs ", "entre"):
 		s.Task = "compare"
-	default:
+	case hasAny(query, "componente", "component", "hola mundo", "hello world"):
+		// Generic "make a component / hello world" request: a language skeleton
+		// is a real, honest starting point.
 		s.Task = "intro"
+	case hasAny(query, "hablame", "explicame", "explica", "que es", "como es", "para que sirve", "intro", "introduccion", "aprender", "contame de", "contame sobre"):
+		s.Task = "intro"
+	default:
+		// A specific how-to we did not recognize. NOT an intro: we must not
+		// fabricate an unrelated example for it.
+		s.Task = "unknown"
+	}
+	if s.Language == "" {
+		s.Unsupported = detectUnsupportedLanguage(query)
 	}
 	return s
+}
+
+// detectUnsupportedLanguage reports a named programming language that Aletheia
+// recognizes by name but does not yet answer with verified examples.
+func detectUnsupportedLanguage(query string) string {
+	for _, lang := range []struct {
+		needle  string
+		display string
+	}{
+		{"kotlin", "Kotlin"}, {"php", "PHP"}, {"java", "Java"}, {"c++", "C++"}, {"cpp", "C++"},
+		{"c#", "C#"}, {"csharp", "C#"}, {"ruby", "Ruby"}, {"swift", "Swift"}, {"scala", "Scala"},
+		{"haskell", "Haskell"}, {"perl", "Perl"}, {"dart", "Dart"}, {"elixir", "Elixir"}, {"lua", "Lua"},
+	} {
+		if hasAny(query, lang.needle) {
+			return lang.display
+		}
+	}
+	return ""
+}
+
+func honestCodingMiss(s codingSlots) string {
+	desc := map[string]string{
+		"python":     "Python",
+		"javascript": "JavaScript",
+		"typescript": "TypeScript",
+		"go":         "Go",
+		"rust":       "Rust",
+		"react":      "React",
+		"sql":        "SQL",
+	}[s.Language]
+	if desc == "" {
+		desc = "ese lenguaje"
+	}
+	return fmt.Sprintf("Puedo ayudarte con %s, pero para esa tarea puntual prefiero no improvisar un ejemplo que no resuelva tu caso. Decime la entrada y la salida que esperás (o un caso concreto) y lo armamos paso a paso.", desc)
 }
 
 func codingResponse(s codingSlots) string {

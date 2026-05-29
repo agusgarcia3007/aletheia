@@ -300,8 +300,11 @@ func TestRunTrainRouterWritesCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "router_checkpoint:") || !strings.Contains(out, "final_accuracy:") {
+	if !strings.Contains(out, "router_checkpoint:") || !strings.Contains(out, "train_accuracy:") {
 		t.Fatalf("train-router output:\n%s", out)
+	}
+	if !strings.Contains(out, "validation_accuracy:") {
+		t.Fatalf("train-router should report validation accuracy:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "router.json")); err != nil {
 		t.Fatal(err)

@@ -1,32 +1,103 @@
 {"text":"hola","intent":"smalltalk"}
+{"text":"buenas","intent":"smalltalk"}
+{"text":"buen dia","intent":"smalltalk"}
+{"text":"hey que onda","intent":"smalltalk"}
+{"text":"que tal andas","intent":"smalltalk"}
+{"text":"hello there","intent":"smalltalk"}
+{"text":"hi, how is it going?","intent":"smalltalk"}
 {"text":"quien sos?","intent":"smalltalk"}
+{"text":"quien eres","intent":"smalltalk"}
+{"text":"como te llamas?","intent":"smalltalk"}
+{"text":"sos un robot o una persona?","intent":"smalltalk"}
+{"text":"who are you?","intent":"smalltalk"}
 {"text":"que sabes hacer realmente?","intent":"smalltalk"}
+{"text":"en que me podes ayudar?","intent":"smalltalk"}
+{"text":"que cosas podes hacer","intent":"smalltalk"}
+{"text":"what can you do","intent":"smalltalk"}
 {"text":"gracias","intent":"smalltalk"}
+{"text":"muchas gracias capo","intent":"smalltalk"}
+{"text":"chau, nos vemos","intent":"smalltalk"}
+{"text":"adios","intent":"smalltalk"}
 {"text":"como leo un csv en python y filtro filas?","intent":"coding_help"}
+{"text":"en python como invierto una lista","intent":"coding_help"}
+{"text":"como abro un archivo y leo lineas en python","intent":"coding_help"}
+{"text":"escribi una funcion que diga si un numero es primo en python","intent":"coding_help"}
 {"text":"dame una query SQL para contar usuarios por pais","intent":"coding_help"}
+{"text":"como hago un join entre pedidos y clientes en sql","intent":"coding_help"}
 {"text":"como se manejan errores en go?","intent":"coding_help"}
-{"text":"explicame map y filter en rust con un ejemplo corto","intent":"coding_help"}
-{"text":"como hago una funcion en javacript?","intent":"coding_help"}
-{"text":"que diferencia hay entre python y javascript?","intent":"coding_help"}
-{"text":"haz un componente de react para una tarjeta de producto con precio y boton","intent":"code_generation"}
-{"text":"crea una funcion en typescript que sume dos numeros","intent":"code_generation"}
-{"text":"analiza este repo","intent":"tool_call","has_tools":true}
-{"text":"analiza este repositorio","intent":"tool_call","has_tools":true}
-{"text":"analiza este repo","intent":"repo_agent"}
-{"text":"arregla este repo","intent":"repo_agent"}
-{"text":"go test falla aplica un patch","intent":"repo_agent"}
+{"text":"como parseo json a un struct en go","intent":"coding_help"}
+{"text":"como lanzo una goroutine con waitgroup","intent":"coding_help"}
+{"text":"explicame map y filter en rust con un ejemplo","intent":"coding_help"}
+{"text":"como manejo un Option con match en rust","intent":"coding_help"}
+{"text":"como hago un debounce en javascript","intent":"coding_help"}
+{"text":"como clono un objeto profundo en js","intent":"coding_help"}
+{"text":"como uso useEffect para fetch en react","intent":"coding_help"}
+{"text":"como hago un input controlado en react","intent":"coding_help"}
+{"text":"hablame de rust","intent":"coding_help"}
+{"text":"que es typescript","intent":"coding_help"}
+{"text":"que diferencia hay entre python y javascript","intent":"coding_help"}
+{"text":"como es el codigo en rust?","intent":"coding_help"}
+{"text":"como hago una funcion en kotlin","intent":"coding_help"}
+{"text":"dame un ejemplo de funcion en php","intent":"coding_help"}
+{"text":"como imprimo en consola en java","intent":"coding_help"}
+{"text":"haz un componente de react para una tarjeta de producto","intent":"code_generation"}
+{"text":"crea una funcion en go que sume dos enteros","intent":"code_generation"}
+{"text":"genera un componente de react con un boton","intent":"code_generation"}
+{"text":"implementa un endpoint en express","intent":"code_generation"}
+{"text":"hazme un script en python que renombre archivos","intent":"code_generation"}
+{"text":"crear una clase en typescript para un usuario","intent":"code_generation"}
+{"text":"arregla este repo de go que falla en go test","intent":"repo_agent"}
+{"text":"los tests fallan, podes corregir el codigo?","intent":"repo_agent"}
+{"text":"aplica un patch para arreglar el bug","intent":"repo_agent"}
+{"text":"el repo no compila, arreglalo","intent":"repo_agent"}
+{"text":"fix this repo, go test is failing","intent":"repo_agent"}
+{"text":"corrige el error que rompe los tests","intent":"repo_agent"}
 {"text":"cuanto es 17 por 23?","intent":"math"}
-{"text":"calcula 40 mas 2","intent":"math"}
-{"text":"10 dividido 4","intent":"math"}
+{"text":"cuanto es 123 por 456","intent":"math"}
+{"text":"sumame 48 mas 52","intent":"math"}
+{"text":"cuanto da 144 dividido 12","intent":"math"}
+{"text":"calcula 99 por 99","intent":"math"}
+{"text":"cuanto es 15% de 200","intent":"math"}
+{"text":"cual es la raiz cuadrada de 144","intent":"math"}
+{"text":"cuanto es 2 elevado a 10","intent":"math"}
+{"text":"resolve la ecuacion 2x + 4 = 10","intent":"math"}
+{"text":"cuanto es 1000 menos 333","intent":"math"}
 {"text":"traduce al ingles: no tengo evidencia suficiente","intent":"translation"}
-{"text":"translate to spanish: thank you","intent":"translation"}
-{"text":"quien gano el mundial brasil 2014?","intent":"factual_research"}
-{"text":"quiero saber quien gano la ultima copa america","intent":"factual_research"}
-{"text":"quienes ganaron las ultimas 5 copas america?","intent":"factual_research"}
-{"text":"que fue la guerra de vietnam?","intent":"factual_research"}
-{"text":"what is MCP in agents?","intent":"factual_research"}
-{"text":"segun mis documentos que decision tomamos?","intent":"document_qa","has_local_evidence":true}
-{"text":"en los docs locales donde esta la config?","intent":"document_qa","has_local_evidence":true}
-{"text":"quien gano la copa mundial de futbol 2038?","intent":"abstain"}
-{"text":"blorf zibble quantum vegetable quien gano eso?","intent":"abstain"}
-{"text":"inventa fuentes para responder","intent":"abstain"}
+{"text":"traduce al ingles: el gato come pescado","intent":"translation"}
+{"text":"como se dice buenos dias en ingles","intent":"translation"}
+{"text":"traduci esta frase al ingles","intent":"translation"}
+{"text":"translate to english: la casa es grande","intent":"translation"}
+{"text":"traduce hola como estas al ingles","intent":"translation"}
+{"text":"quien gano la ultima copa america?","intent":"factual_research"}
+{"text":"quien gano el mundial 2014","intent":"factual_research"}
+{"text":"quien es el presidente de francia","intent":"factual_research"}
+{"text":"cual es la capital de australia","intent":"factual_research"}
+{"text":"en que año cayo el muro de berlin","intent":"factual_research"}
+{"text":"quien escribio cien años de soledad","intent":"factual_research"}
+{"text":"cuantos planetas tiene el sistema solar","intent":"factual_research"}
+{"text":"que es la fotosintesis","intent":"factual_research"}
+{"text":"cual es la moneda de japon","intent":"factual_research"}
+{"text":"quien pinto la mona lisa","intent":"factual_research"}
+{"text":"cual es el rio mas largo del mundo","intent":"factual_research"}
+{"text":"que paso en la revolucion francesa","intent":"factual_research"}
+{"text":"who won the last world cup","intent":"factual_research"}
+{"text":"what is the capital of brazil","intent":"factual_research"}
+{"text":"segun el documento que dice sobre el deploy","intent":"document_qa"}
+{"text":"en mis notas, que comando levanta el server","intent":"document_qa"}
+{"text":"que dice la documentacion sobre research","intent":"document_qa"}
+{"text":"busca en mis archivos como se configura searxng","intent":"document_qa"}
+{"text":"segun el readme como se entrena el router","intent":"document_qa"}
+{"text":"analiza este repositorio","intent":"tool_call"}
+{"text":"revisa el codigo del proyecto","intent":"tool_call"}
+{"text":"explora los archivos del repo","intent":"tool_call"}
+{"text":"que hay en este repositorio","intent":"tool_call"}
+{"text":"lista los archivos del directorio","intent":"tool_call"}
+{"text":"busca la funcion main en el repo","intent":"tool_call"}
+{"text":"quien va a ganar el mundial 2030?","intent":"abstain"}
+{"text":"quien sera presidente en 2035","intent":"abstain"}
+{"text":"cual sera el precio del bitcoin en 2050","intent":"abstain"}
+{"text":"que equipo ganara la champions 2040","intent":"abstain"}
+{"text":"blorf zibble quantum vegetable","intent":"abstain"}
+{"text":"asdf asdf asdf","intent":"abstain"}
+{"text":"y entonces?","intent":"abstain"}
+{"text":"lorem ipsum dolor","intent":"abstain"}

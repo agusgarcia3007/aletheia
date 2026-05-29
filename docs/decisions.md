@@ -233,3 +233,29 @@
 - Add `datasets/router_mikros.jsonl`, `train-router`, and `dataset build --profile mikros-live-v1` so routing and curriculum can improve from data rather than hardcoded final answers.
 - Add `evals/mikros_live` as the 250-case live gate: natural answer rate, zero links-only responses, no raw chunk leakage, coding language accuracy, math exactness, short translation, research synthesis, and abstention.
 - Legacy generation remains a last fallback until `TransformerV2` is connected, trained, and promoted by evals.
+
+## Milestone Verified Honesty V1
+
+- Never serve raw byte-model generation: `cleanGeneration` rejects replacement runes, control chars and leftover action tokens, and `safeGenerate` only trusts a checkpoint with real training steps. Anything else abstains honestly instead of emitting noise.
+- Knowledge lives outside the weights, not in code: coding answers come from an indexed, citable corpus under `knowledge/coding/` (one worked example per file). Curated examples answer first; unseen tasks are retrieved with a `Fuente:` citation; a miss asks for the missing detail. No new hardcoded answer maps.
+- Math is real computation, not a lookup: `internal/answerer/math.go` evaluates percentages, powers, roots, linear equations and parenthesized expressions via a recursive-descent parser. Two-operand arithmetic keeps its existing output for gate stability.
+- World-knowledge questions are evidence-first by guardrail: a generalized `isFactualKnowledgeQuestion` plus a `forceEvidence` gate prevent the smalltalk/coding answerers or generation from ever answering a factual prompt; it must cite, research, or abstain.
+- Low-signal/nonsense input is detected structurally (repeated tokens, keyboard mashing, vowel-starved gibberish), not via a hardcoded list, and asks for a reformulation.
+- The trainable router reports validation accuracy from a held-out split (`train-router --val-split`) and warns on a large train/validation gap; deterministic server guardrails (math, coding, factual, nonsense, tool, repo) carry correctness so a weak router only acts as a hint.
+- An out-of-distribution battery (`internal/apiserver/battery_*_test.go`) is a permanent gate: zero raw-chunk/links-only/hallucination, >=99% natural-answer rate, capability above a floor. Passing the curated suites is no longer mistaken for generalization.
+
+## Milestone Learn-On-Demand V1
+
+- Coding knowledge is not a pre-loaded dictionary: the corpus under `knowledge/coding/` is only a small verified seed. Unknown coding questions (e.g. Swift) are answered by the learning loop, not by hand-written files.
+- The coding answerer's knowledge hook is `codingKnowledgeOrLearn`: (1) return what was already learned (persisted research jobs), (2) else the seed/indexed corpus, (3) else say "I don't know yet" and enqueue a learning job; when it completes, the next ask answers from memory with a citation. Knowledge sticks because jobs/chunks live in SQLite across restarts.
+- Coding knowledge gaps are allowed into the learning loop (previously coding was fully blocked from research); repo-repair and curated/seed-covered prompts still never trigger learning, so existing no-research gates stay green.
+- Duplicate learning is avoided via `matchingLearningJob`; a question being learned reports "still learning" instead of re-enqueuing.
+- Open follow-up: learned coding answers are web-sourced and not yet verified by compiling/running. Verifier-first verification of learned snippets (and `min_trust_score` tuning for code) is the next step before treating a learned answer as fully trusted.
+
+## Milestone Productive V1
+
+- Mixture of experts is architectural, not neural (for now): the router is the gating network and each mode (math, coding, smalltalk, translation, tool, research, abstain) is a sparse expert — exactly one runs per request, cheap experts short-circuit before expensive ones. `/metrics` exposes `aletheia_expert_total{expert=...}` so the routing distribution is observable. A neural MoE belongs to the real `TransformerV2` training milestone, not to a gated-off byte model.
+- Speed: retrieval memoizes per-chunk embeddings (`retriever.EmbeddingCache`, keyed by immutable chunk ID) instead of recomputing hash vectors per query; the server reuses one cached retriever. Deterministic chat latency is ~0.5 ms/req on CPU (`TestChatLatencyDeterministicExperts`, a regression gate at 25 ms).
+- Verifier-first knowledge: shipped Go knowledge must parse (`go/parser`, in-process, gated by `TestShippedGoKnowledgeParses`); learned Go answers are parser-checked and annotated as verified/unverified before being presented.
+- Router is honest and lean: trained with a held-out validation split (`--val-split`) that surfaces the train/validation gap, and pruned of rare single-occurrence features (`--prune-min-count`), shrinking the checkpoint ~66% and reducing memorization. Deterministic server guardrails carry correctness; the linear router is only a hint.
+- Operability: `serve --knowledge` configures the indexed corpus; `/readyz` and `/metrics` reflect real state (memory, research, expert distribution). The deployed artifact stays the single public `aletheia-mikros` surface.

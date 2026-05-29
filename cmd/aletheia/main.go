@@ -335,6 +335,8 @@ func runTrainRouter(args []string) error {
 	epochs := fs.Int("epochs", 80, "training epochs")
 	learningRate := fs.Float64("learning-rate", 0.2, "learning rate")
 	minConfidence := fs.Float64("min-confidence", 0.35, "minimum confidence before fallback routing")
+	valSplit := fs.Float64("val-split", 0.2, "fraction of examples held out to measure generalization (0 to disable)")
+	pruneMinCount := fs.Int("prune-min-count", 2, "drop features seen fewer than this many times (shrinks model, reduces overfit; 0/1 disables)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -342,10 +344,22 @@ func runTrainRouter(args []string) error {
 	if err != nil {
 		return err
 	}
+	// First pass: hold out a validation set to measure generalization honestly.
+	_, valReport, err := router.TrainLinear(examples, router.TrainOptions{
+		Epochs:          *epochs,
+		LearningRate:    *learningRate,
+		MinConfidence:   *minConfidence,
+		ValidationSplit: *valSplit,
+	})
+	if err != nil {
+		return err
+	}
+	// Second pass: train on all data for the deployed artifact.
 	model, report, err := router.TrainLinear(examples, router.TrainOptions{
 		Epochs:        *epochs,
 		LearningRate:  *learningRate,
 		MinConfidence: *minConfidence,
+		PruneMinCount: *pruneMinCount,
 	})
 	if err != nil {
 		return err
@@ -358,8 +372,14 @@ func runTrainRouter(args []string) error {
 	fmt.Printf("examples: %d\n", report.Examples)
 	fmt.Printf("initial_loss: %.6f\n", report.InitialLoss)
 	fmt.Printf("final_loss: %.6f\n", report.FinalLoss)
-	fmt.Printf("initial_accuracy: %.4f\n", report.InitialAccuracy)
-	fmt.Printf("final_accuracy: %.4f\n", report.FinalAccuracy)
+	fmt.Printf("train_accuracy: %.4f\n", report.FinalAccuracy)
+	if valReport.ValidationExamples > 0 {
+		fmt.Printf("validation_examples: %d\n", valReport.ValidationExamples)
+		fmt.Printf("validation_accuracy: %.4f\n", valReport.ValidationAccuracy)
+		if report.FinalAccuracy-valReport.ValidationAccuracy > 0.25 {
+			fmt.Printf("warning: large train/validation gap (%.2f) suggests overfitting; add more diverse examples\n", report.FinalAccuracy-valReport.ValidationAccuracy)
+		}
+	}
 	return nil
 }
 
@@ -952,6 +972,7 @@ func runServe(args []string) error {
 	checkpointsDir := fs.String("checkpoints-dir", os.Getenv("ALETHEIA_CHECKPOINTS_DIR"), "directory containing model checkpoint subdirectories")
 	modelName := fs.String("model", os.Getenv("ALETHEIA_MODEL"), "served OpenAI-compatible model name")
 	routerCheckpoint := fs.String("router-checkpoint", envDefault("ALETHEIA_ROUTER_CHECKPOINT", "checkpoints/router-mikros"), "optional Mikros router checkpoint directory")
+	knowledgePath := fs.String("knowledge", envDefault("ALETHEIA_KNOWLEDGE", apiserver.DefaultKnowledgePath), "local knowledge corpus directory indexed for retrieval")
 	apiKey := fs.String("api-key", os.Getenv("ALETHEIA_API_KEY"), "Bearer API key for /v1/* endpoints")
 	auth := fs.String("auth", envDefault("ALETHEIA_AUTH", "bearer"), "authentication mode: bearer or none")
 	maxBodyBytes := fs.Int64("max-body-bytes", apiserver.DefaultMaxBodyBytes, "maximum JSON request body size")
@@ -984,6 +1005,7 @@ func runServe(args []string) error {
 		Store:            store,
 		Research:         researchOptionsFromConfig(cfg),
 		RouterCheckpoint: *routerCheckpoint,
+		KnowledgePath:    *knowledgePath,
 	})
 	if err != nil {
 		return err
