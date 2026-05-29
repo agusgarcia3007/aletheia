@@ -192,10 +192,11 @@ func runTrain(args []string) error {
 		return err
 	}
 	report, err := training.Train(context.Background(), training.Options{
-		ConfigPath:  *configPath,
-		DatasetPath: *datasetPath,
-		OutDir:      *outDir,
-		Steps:       *steps,
+		ConfigPath:    *configPath,
+		DatasetPath:   *datasetPath,
+		OutDir:        *outDir,
+		Steps:         *steps,
+		OverrideSteps: flagWasSet(fs, "steps"),
 	})
 	if err != nil {
 		return err

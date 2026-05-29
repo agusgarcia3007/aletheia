@@ -163,3 +163,4 @@
 - Add a deterministic chat profile for `aletheia-mikros` in Chat Completions so the first public API returns stable basic responses while checkpoint training remains primitive.
 - Keep `solve` verifier-first and separate from the public chat API; it does not require a served planner checkpoint by default.
 - Make Docker/Dokploy build and serve one checkpoint only: `aletheia-mikros`.
+- Use a zero-step bootstrap checkpoint in Docker builds so deploys do not retrain on every build; real training remains a local/manual command.

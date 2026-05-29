@@ -11,7 +11,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/aletheia ./cmd/aletheia
 RUN /out/aletheia train \
     --config configs/aletheia-mikros.yaml \
     --dataset datasets/aletheia_mikros.jsonl \
-    --out /out/checkpoints/aletheia-mikros
+    --out /out/checkpoints/aletheia-mikros \
+    --steps 0
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app

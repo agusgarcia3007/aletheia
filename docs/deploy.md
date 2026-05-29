@@ -20,7 +20,7 @@ ALETHEIA_CHECKPOINT=/app/checkpoints/aletheia-mikros
 ALETHEIA_MODEL=aletheia-mikros
 ```
 
-The Dockerfile is self-contained for the default API model: it builds the Go binary and trains `aletheia-mikros` inside the image. The runtime image contains the binary and that single checkpoint.
+The Dockerfile is self-contained for the default API model: it builds the Go binary and writes a zero-step `aletheia-mikros` bootstrap checkpoint inside the image. Runtime chat responses for this first public version are stabilized by the server profile, so deploys do not retrain the model on every build. The runtime image contains the binary and that single checkpoint.
 
 ## API Smoke
 

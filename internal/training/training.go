@@ -19,10 +19,11 @@ type JSONLExample struct {
 }
 
 type Options struct {
-	ConfigPath  string
-	DatasetPath string
-	OutDir      string
-	Steps       int
+	ConfigPath    string
+	DatasetPath   string
+	OutDir        string
+	Steps         int
+	OverrideSteps bool
 }
 
 type Report struct {
@@ -86,7 +87,7 @@ func Train(ctx context.Context, opts Options) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	if opts.Steps > 0 {
+	if opts.OverrideSteps {
 		cfg.Training.MaxSteps = opts.Steps
 	}
 	tok := tokenizer.New()
