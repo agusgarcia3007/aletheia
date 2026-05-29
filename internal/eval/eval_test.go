@@ -52,6 +52,27 @@ func TestRunBootstrapReportsBeamImprovement(t *testing.T) {
 	}
 }
 
+func TestRunProductionReportsReleaseGateMetrics(t *testing.T) {
+	root := t.TempDir()
+	suite := filepath.Join(root, "evals", "production")
+	if err := os.MkdirAll(suite, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Run(context.Background(), suite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Improved() {
+		t.Fatalf("report = %+v", report)
+	}
+	if len(report.Cases) != 100 {
+		t.Fatalf("cases = %d, want 100", len(report.Cases))
+	}
+	if report.Metrics.FalseVerifiedRate != 0 || report.Metrics.CitationValidity < 0.98 || report.Metrics.RepairPassRate < 0.40 {
+		t.Fatalf("metrics = %+v", report.Metrics)
+	}
+}
+
 func selectorDatasetFixture() string {
 	return `{"snapshot":{"max_tool_calls":8},"candidates":[{"action":"<ACT_RESPOND>","log_prob":0},{"action":"<ACT_RUN_TESTS>","log_prob":-0.1},{"action":"<ACT_PARSE_CODE>","log_prob":-0.5},{"action":"<ACT_MUTATE_CODE>","log_prob":-0.5},{"action":"<ACT_VERIFY>","log_prob":-0.5},{"action":"<ACT_ABSTAIN>","log_prob":-2}],"chosen":"<ACT_RUN_TESTS>","reward":1}
 {"snapshot":{"has_run_tests":true,"last_verifier_status":"fail","tool_calls":1,"max_tool_calls":8},"candidates":[{"action":"<ACT_RESPOND>","log_prob":0},{"action":"<ACT_PARSE_CODE>","log_prob":-0.1},{"action":"<ACT_RUN_TESTS>","log_prob":-0.5},{"action":"<ACT_MUTATE_CODE>","log_prob":-0.5},{"action":"<ACT_VERIFY>","log_prob":-0.5},{"action":"<ACT_ABSTAIN>","log_prob":-2}],"chosen":"<ACT_PARSE_CODE>","reward":1}

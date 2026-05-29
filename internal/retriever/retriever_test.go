@@ -122,6 +122,9 @@ func TestRetrieverRejectsUnrelatedWebEvidenceAndUsesSourceURL(t *testing.T) {
 	ctx := context.Background()
 	store := openStore(t)
 	sourceID := "source_mcp_1"
+	if _, err := store.CreateResearchJob(ctx, memory.ResearchJob{ID: "job-1", Query: "what is MCP", Status: "completed", Mode: "background", Answer: "MCP is a protocol.", Confidence: 0.8}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.UpsertWebSource(ctx, memory.WebSource{
 		ID:          sourceID,
 		JobID:       "job-1",

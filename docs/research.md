@@ -5,13 +5,14 @@ Aletheia research is an opt-in evidence pipeline. It uses local memory first, th
 Flow:
 
 1. Route the chat/query intent.
-2. Search local memory.
-3. If local evidence is sufficient, answer with citations.
-4. If evidence is missing and research is enabled, queue a research job.
-5. Search SearXNG, fetch sources, extract clean text, rank sources, extract claims, and store evidence.
-6. Future `ask` or chat requests can answer from stored chunks.
+2. Prefer a completed research answer when query terms overlap and confidence is high enough.
+3. Search local memory.
+4. If local evidence is sufficient, answer with citations.
+5. If evidence is missing and research is enabled, queue a research job.
+6. Search SearXNG, fetch sources, extract clean text, rank sources, extract claims, and store evidence.
+7. Future `ask` or chat requests can answer from stored answers/chunks.
 
-Research stores evidence, not just answers. Fetched pages are persisted into `documents`/`chunks`, source metadata goes into `web_sources`, claims go into `web_claims`, and graph nodes/edges record `web_page`, `web_source`, and `web_claim` relationships.
+Research stores evidence, not just answers. Completed jobs keep a canonical answer, fetched pages are persisted into `documents`/`chunks`, source metadata goes into `web_sources`, claims go into `web_claims`, and graph nodes/edges record `web_page`, `web_source`, and `web_claim` relationships.
 
 ## Config
 

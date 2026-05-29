@@ -50,3 +50,73 @@ func TestBuildCandidateRejectsUnknownPattern(t *testing.T) {
 		t.Fatal("expected no repair rule")
 	}
 }
+
+func TestBuildCandidateRenamesKnownUndefinedFunction(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package p\n\nfunc Sum(a,b int) int { return a + b }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := BuildCandidate(repo, Counterexample{Stderr: "undefined: Add"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(candidate.NewText, "func Add(") {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+}
+
+func TestBuildCandidateAddsMissingImport(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package p\n\nfunc Trim(s string) string { return strings.TrimSpace(s) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := BuildCandidate(repo, Counterexample{Stderr: "undefined: strings"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(candidate.NewText, `import "strings"`) {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+}
+
+func TestBuildCandidateRemovesUnusedImport(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package p\n\nimport \"fmt\"\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := BuildCandidate(repo, Counterexample{Stderr: "\"fmt\" imported and not used"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(candidate.NewText, `import "fmt"`) {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+}
+
+func TestBuildCandidateRepairsSimpleIntReturn(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package p\n\nfunc Value() int { return \"0\" }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := BuildCandidate(repo, Counterexample{Stderr: "cannot use \"0\" (untyped string constant) as int value in return statement"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(candidate.NewText, "return 0") {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+}
+
+func TestBuildCandidateAddsNilGuard(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package p\n\nfunc Value(value *int) int { return *value }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := BuildCandidate(repo, Counterexample{Stderr: "panic: runtime error: invalid memory address or nil pointer dereference"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(candidate.NewText, "if value == nil") {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+}

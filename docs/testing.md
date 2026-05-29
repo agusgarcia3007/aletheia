@@ -6,6 +6,7 @@ Base checks after every milestone:
 go test -count=1 ./...
 go run ./cmd/aletheia eval --suite evals/bootstrap
 go run ./cmd/aletheia eval --suite evals/bootstrap --json
+go run ./cmd/aletheia eval --suite evals/production --json
 go run ./cmd/aletheia config inspect --config configs/micro.yaml
 ```
 
@@ -60,4 +61,22 @@ go run ./cmd/aletheia solve \
   --db "$tmp/memory.sqlite" \
   --bench \
   --trace
+```
+
+Production API smoke:
+
+```bash
+curl https://api.llmlabs.app/healthz
+curl https://api.llmlabs.app/readyz
+curl https://api.llmlabs.app/metrics
+curl https://api.llmlabs.app/v1/aletheia/jobs \
+  -H "Authorization: Bearer local-dev"
+curl https://api.llmlabs.app/v1/chat/completions \
+  -H "Authorization: Bearer local-dev" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"aletheia-mikros","messages":[{"role":"user","content":"que es un MCP?"}],"max_tokens":128}'
+curl https://api.llmlabs.app/v1/chat/completions \
+  -H "Authorization: Bearer local-dev" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"aletheia-mikros","messages":[{"role":"user","content":"que fue la guerra de vietnam?"}],"max_tokens":128}'
 ```

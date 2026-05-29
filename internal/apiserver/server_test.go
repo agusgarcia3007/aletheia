@@ -29,6 +29,21 @@ func TestHealthDoesNotRequireAuth(t *testing.T) {
 	}
 }
 
+func TestReadyAndMetricsDoNotRequireAuth(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServer(t, Options{APIKey: "secret", Store: store})
+	ready := httptest.NewRecorder()
+	server.Handler().ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), `"status":"ready"`) {
+		t.Fatalf("ready status = %d body=%s", ready.Code, ready.Body.String())
+	}
+	metrics := httptest.NewRecorder()
+	server.Handler().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if metrics.Code != http.StatusOK || !strings.Contains(metrics.Body.String(), "aletheia_requests_total") {
+		t.Fatalf("metrics status = %d body=%s", metrics.Code, metrics.Body.String())
+	}
+}
+
 func TestModelsRequiresBearerAuth(t *testing.T) {
 	server := newTestServer(t, Options{APIKey: "secret"})
 
@@ -191,6 +206,70 @@ func TestChatKnowledgeGapQueuesResearchJob(t *testing.T) {
 	}
 	if len(jobs) != 1 || jobs[0].Status != "queued" {
 		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestChatUsesCompletedResearchAnswerBeforeRetriever(t *testing.T) {
+	store := newTestStore(t)
+	job, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{
+		ID:         "research-mcp",
+		Query:      "what is MCP in agents?",
+		Status:     "completed",
+		Mode:       "background",
+		MaxSources: 2,
+		Answer:     "The Model Context Protocol (MCP) is an open protocol for connecting AI agents to tools and data sources.",
+		Confidence: 0.8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertWebSource(contextBackground(), memory.WebSource{
+		ID:          "source-mcp",
+		JobID:       job.ID,
+		URL:         "https://modelcontextprotocol.io/docs/getting-started/intro",
+		FinalURL:    "https://modelcontextprotocol.io/docs/getting-started/intro",
+		Title:       "Model Context Protocol",
+		Status:      "stored",
+		ContentHash: "hash",
+		TrustScore:  0.8,
+		ByteSize:    256,
+		ContentType: "text/html",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, Options{
+		APIKey:   "secret",
+		Store:    store,
+		Research: research.Options{Enabled: true, AutoOnKnowledgeGap: true, MinTrustScore: 0.35, MaxSources: 3},
+	})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"que es un MCP?"}]}`, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Model Context Protocol") || !strings.Contains(rec.Body.String(), "https://modelcontextprotocol.io") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestJobsHideFailedByDefault(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{ID: "failed-job", Query: "bad", Status: "failed", Mode: "background"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{ID: "queued-job", Query: "ok", Status: "queued", Mode: "background"}); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, Options{APIKey: "secret", Store: store})
+	hidden := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/aletheia/jobs", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	server.Handler().ServeHTTP(hidden, req)
+	if hidden.Code != http.StatusOK || strings.Contains(hidden.Body.String(), "failed-job") || !strings.Contains(hidden.Body.String(), "queued-job") {
+		t.Fatalf("hidden failed jobs status = %d body=%s", hidden.Code, hidden.Body.String())
+	}
+	visible := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/aletheia/jobs?include_failed=true", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	server.Handler().ServeHTTP(visible, req)
+	if visible.Code != http.StatusOK || !strings.Contains(visible.Body.String(), "failed-job") {
+		t.Fatalf("visible failed jobs status = %d body=%s", visible.Code, visible.Body.String())
 	}
 }
 

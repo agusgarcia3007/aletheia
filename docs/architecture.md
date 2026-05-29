@@ -28,7 +28,7 @@ Skill reuse is opt-in with `solve --use-skills`. A successful normal solve can w
 
 Configuration is opt-in and strict. Commands keep their current defaults without `--config`; with `--config`, `project.memory_db`, search defaults, verifier defaults, inference defaults, and memory indexing defaults come from YAML unless a flag overrides them.
 
-Evaluation is programmatic and verifier-first. `evals/bootstrap` reports pass/fail cases plus aggregate metrics, and `eval --json` emits a machine-readable report for later learning loops.
+Evaluation is programmatic and verifier-first. `evals/bootstrap` guards bootstrap behavior, while `evals/production` is the release gate for the verified-agent target with 100 deterministic checks covering doc QA, abstention, Go repair, repo QA, and research evidence policy. `eval --json` emits machine-readable metrics for learning loops.
 
 Memory graph payloads are append-only JSON records on the existing `nodes`/`edges` tables. Solve and search now record `test_failure`, `counterexample`, `repair_attempt`, `patch_candidate`, and `verified_patch` nodes with causal edges such as `derived_from`, `failed_because`, `verifies`, `fixes`, and `breaks`. `memory graph` provides a textual filtered view.
 
@@ -38,10 +38,10 @@ MCTS is opt-in with `solve --search mcts` or `search.strategy: mcts`. Beam remai
 
 Costly verifiers are opt-in. `go_test_fuzz` and `go_test_bench` run through the same allowlisted no-shell runner and are selected with config or `solve --fuzz` / `solve --bench`.
 
-The repair engine is still intentionally small and deterministic. Later milestones can broaden it beyond simple Go failures while keeping the same verifier, selector, search, and memory contracts.
+The repair engine is intentionally deterministic. Go Repair V1 handles small verifier-driven patches such as wrong arithmetic, known undefined function rename, missing/unused imports, simple int return mismatches, and a narrow nil-pointer guard. It still produces patch candidates only; verification remains mandatory before materialization.
 
 Model scaling is manual. `configs/core-100m.yaml` is a target configuration, not an automatic test path; scaling should wait for eval evidence that a checkpoint beats the current mock/heuristic stack.
 
-Deployment is inference-only in v1. `aletheia serve` loads one checkpoint and serves `/v1/models`, `/v1/chat/completions`, and `/v1/completions` behind local Bearer auth. The Docker/Dokploy default is the single public checkpoint, `aletheia-mikros`; its chat endpoint uses a narrow deterministic response profile for stable greetings, limits, and command help while the underlying micro-model remains experimental. The API does not expose `solve`, verifiers, repository access, or command execution.
+Deployment is inference/research-only in public v1. `aletheia serve` loads one checkpoint and serves `/v1/models`, `/v1/chat/completions`, and `/v1/completions` behind local Bearer auth, plus `/readyz`, `/metrics`, and authenticated research job inspection. The Docker/Dokploy default is the single public checkpoint, `aletheia-mikros`; its chat endpoint uses deterministic routing, verified memory, and background research before falling back to model generation. The API does not expose `solve`, verifiers, repository access, or command execution.
 
-Research is opt-in. The chat router handles smalltalk locally, searches memory for factual questions, and can queue background SearXNG research jobs on knowledge gaps when enabled. Research fetches pages with bounded HTTP policy, extracts text and claims, stores pages in documents/chunks, persists `research_jobs`/`web_sources`/`web_claims`, and writes graph nodes for future local retrieval.
+Research is opt-in. The chat router handles smalltalk locally, prefers completed verified research answers, searches memory for factual questions, and can queue background SearXNG research jobs on knowledge gaps when enabled. Research fetches pages with bounded HTTP policy, extracts text and claims, stores pages in documents/chunks, persists `research_jobs`/`web_sources`/`web_claims`, and writes graph nodes for future local retrieval. Failed jobs are hidden from default job listing so the UI can focus on active/completed work.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -44,6 +45,9 @@ type Server struct {
 	research  research.Options
 	created   int64
 	nextID    atomic.Uint64
+	requests  atomic.Uint64
+	chats     atomic.Uint64
+	queued    atomic.Uint64
 }
 
 func New(opts Options) (*Server, error) {
@@ -103,6 +107,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /readyz", s.handleReady)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /v1/models", s.withAuth(s.handleModels))
 	mux.HandleFunc("POST /v1/chat/completions", s.withAuth(s.handleChatCompletions))
 	mux.HandleFunc("POST /v1/completions", s.withAuth(s.handleCompletions))
@@ -137,6 +143,7 @@ func normalizeOptions(opts Options) Options {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	s.requests.Add(1)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",
 		"model_loaded": true,
@@ -144,7 +151,45 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	s.requests.Add(1)
+	if s.store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		if err := s.store.Ping(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"status": "not_ready",
+				"error":  err.Error(),
+			})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":            "ready",
+		"model_loaded":      true,
+		"memory_configured": s.store != nil,
+		"research_enabled":  s.research.Enabled,
+	})
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	s.requests.Add(1)
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	uptime := time.Now().Unix() - s.created
+	_, _ = fmt.Fprintf(w, "aletheia_uptime_seconds %d\n", uptime)
+	_, _ = fmt.Fprintf(w, "aletheia_requests_total %d\n", s.requests.Load())
+	_, _ = fmt.Fprintf(w, "aletheia_chat_requests_total %d\n", s.chats.Load())
+	_, _ = fmt.Fprintf(w, "aletheia_research_jobs_queued_total %d\n", s.queued.Load())
+	_, _ = fmt.Fprintf(w, "aletheia_model_loaded 1\n")
+	if s.store != nil {
+		_, _ = fmt.Fprintf(w, "aletheia_memory_configured 1\n")
+	} else {
+		_, _ = fmt.Fprintf(w, "aletheia_memory_configured 0\n")
+	}
+}
+
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
+	s.requests.Add(1)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
 		"data": []map[string]any{
@@ -159,6 +204,8 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	s.requests.Add(1)
+	s.chats.Add(1)
 	var req chatCompletionRequest
 	if !s.decodeRequest(w, r, &req) {
 		return
@@ -198,6 +245,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(lastUserMessage(req.Messages))
 	if query != "" && s.store != nil {
+		if answer, ok := s.completedResearchAnswer(r.Context(), query); ok {
+			writeJSON(w, http.StatusOK, s.chatResponse(answer, s.textUsage(prompt, answer)))
+			return
+		}
 		answer, err := (retriever.Retriever{Store: s.store}).Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
 		if err == nil && answer.Verified {
 			writeJSON(w, http.StatusOK, s.chatResponse(answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
@@ -271,6 +322,7 @@ func (s *Server) chatResponse(content string, usage map[string]int) map[string]a
 }
 
 func (s *Server) handleResearch(w http.ResponseWriter, r *http.Request) {
+	s.requests.Add(1)
 	var req researchRequest
 	if !s.decodeRequest(w, r, &req) {
 		return
@@ -306,6 +358,7 @@ func (s *Server) handleResearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResearchStatus(w http.ResponseWriter, r *http.Request) {
+	s.requests.Add(1)
 	id := strings.TrimPrefix(r.URL.Path, "/v1/aletheia/research/")
 	if id == "" {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "job", "missing_job", "job id is required")
@@ -340,14 +393,31 @@ func (s *Server) handleResearchStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	s.requests.Add(1)
 	if s.store == nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "research", "research_unavailable", "research store is not configured")
 		return
 	}
-	jobs, err := s.store.ListResearchJobs(r.Context(), 20)
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	includeFailed := r.URL.Query().Get("include_failed") == "true"
+	jobs, err := s.store.ListResearchJobs(r.Context(), limit)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "server_error", "research", "research_failed", err.Error())
 		return
+	}
+	if !includeFailed {
+		filtered := jobs[:0]
+		for _, job := range jobs {
+			if job.Status != "failed" {
+				filtered = append(filtered, job)
+			}
+		}
+		jobs = filtered
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
 }
@@ -365,12 +435,16 @@ func (s *Server) enqueueResearch(ctx context.Context, query string, mode string,
 	if maxSources <= 0 {
 		maxSources = s.research.MaxSources
 	}
-	return s.store.CreateResearchJob(ctx, memory.ResearchJob{
+	job, err := s.store.CreateResearchJob(ctx, memory.ResearchJob{
 		Query:      query,
 		Status:     "queued",
 		Mode:       mode,
 		MaxSources: maxSources,
 	})
+	if err == nil {
+		s.queued.Add(1)
+	}
+	return job, err
 }
 
 func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
@@ -509,6 +583,100 @@ func shouldResearch(query string, mode string, opts research.Options) bool {
 		return !isCodingTask(query)
 	}
 	return opts.AutoOnKnowledgeGap && !isCodingTask(query)
+}
+
+func (s *Server) completedResearchAnswer(ctx context.Context, query string) (string, bool) {
+	if s.store == nil {
+		return "", false
+	}
+	jobs, err := s.store.ListResearchJobs(ctx, 50)
+	if err != nil {
+		return "", false
+	}
+	queryTokens := meaningfulChatTokens(query)
+	if len(queryTokens) == 0 {
+		return "", false
+	}
+	for _, job := range jobs {
+		if job.Status != "completed" || strings.TrimSpace(job.Answer) == "" || job.Confidence < s.research.MinTrustScore {
+			continue
+		}
+		if meaningfulOverlap(queryTokens, meaningfulChatTokens(job.Query+" "+job.Answer)) < requiredMeaningfulOverlap(len(queryTokens)) {
+			continue
+		}
+		sources, _ := s.store.WebSourcesByJob(ctx, job.ID)
+		return formatResearchAnswer(job, sources), true
+	}
+	return "", false
+}
+
+func formatResearchAnswer(job memory.ResearchJob, sources []memory.WebSource) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(job.Answer))
+	if len(sources) > 0 {
+		b.WriteString("\n\nFuentes:\n")
+		seen := map[string]bool{}
+		written := 0
+		for _, source := range sources {
+			url := source.FinalURL
+			if url == "" {
+				url = source.URL
+			}
+			if url == "" || seen[url] {
+				continue
+			}
+			seen[url] = true
+			title := source.Title
+			if title == "" {
+				title = url
+			}
+			b.WriteString(fmt.Sprintf("- %s - %s\n", title, url))
+			written++
+			if written >= 5 {
+				break
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func meaningfulChatTokens(text string) map[string]bool {
+	normalized := normalizeBasicChat(text)
+	out := map[string]bool{}
+	for _, token := range strings.Fields(normalized) {
+		if len([]rune(token)) <= 2 || chatStopWords[token] {
+			continue
+		}
+		out[token] = true
+	}
+	return out
+}
+
+func meaningfulOverlap(left map[string]bool, right map[string]bool) int {
+	overlap := 0
+	for token := range left {
+		if right[token] {
+			overlap++
+		}
+	}
+	return overlap
+}
+
+func requiredMeaningfulOverlap(tokenCount int) int {
+	if tokenCount <= 2 {
+		return 1
+	}
+	return 2
+}
+
+var chatStopWords = map[string]bool{
+	"a": true, "an": true, "and": true, "are": true, "as": true, "by": true, "for": true, "from": true,
+	"how": true, "is": true, "it": true, "of": true, "on": true, "or": true, "the": true, "to": true,
+	"what": true, "when": true, "where": true, "who": true, "why": true, "with": true,
+	"como": true, "con": true, "cual": true, "cuando": true, "de": true, "del": true, "donde": true,
+	"el": true, "en": true, "es": true, "esa": true, "ese": true, "eso": true, "esta": true, "este": true,
+	"fue": true, "la": true, "las": true, "lo": true, "los": true, "para": true, "por": true, "que": true,
+	"quien": true, "son": true, "un": true, "una": true, "y": true,
 }
 
 func isCodingTask(query string) bool {

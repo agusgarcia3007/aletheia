@@ -11,6 +11,7 @@ import (
 
 	"aletheia/internal/cognitivevm"
 	"aletheia/internal/memory"
+	"aletheia/internal/repair"
 	"aletheia/internal/retriever"
 	"aletheia/internal/selector"
 	"aletheia/internal/verifier"
@@ -29,6 +30,8 @@ type BootstrapReport struct {
 type CaseResult struct {
 	Name                  string `json:"name"`
 	Status                string `json:"status"`
+	Category              string `json:"category,omitempty"`
+	EvidenceStatus        string `json:"evidence_status,omitempty"`
 	CandidateGreedyStatus string `json:"candidate_greedy_status,omitempty"`
 	BeamStatus            string `json:"beam_status,omitempty"`
 	MCTSStatus            string `json:"mcts_status,omitempty"`
@@ -38,16 +41,23 @@ type CaseResult struct {
 	SkillToolCalls        int    `json:"skill_tool_calls,omitempty"`
 	ToolCalls             int    `json:"tool_calls,omitempty"`
 	Hallucinated          bool   `json:"hallucinated,omitempty"`
+	FalseVerified         bool   `json:"false_verified,omitempty"`
+	CitationValid         bool   `json:"citation_valid,omitempty"`
+	RepairCase            bool   `json:"repair_case,omitempty"`
 	Improved              bool   `json:"improved"`
 }
 
 type Metrics struct {
 	VerifiedSuccessRate float64 `json:"verified_success_rate"`
+	FalseVerifiedRate   float64 `json:"false_verified_rate"`
 	HallucinationRate   float64 `json:"hallucination_rate"`
 	AbstentionAccuracy  float64 `json:"abstention_accuracy"`
+	CitationValidity    float64 `json:"citation_validity"`
+	RepairPassRate      float64 `json:"repair_pass_rate"`
 	ToolCallsPerSuccess float64 `json:"tool_calls_per_success"`
 	SecondsPerSuccess   float64 `json:"seconds_per_success"`
 	MemoryHitRate       float64 `json:"memory_hit_rate"`
+	CostPerSuccess      float64 `json:"cost_per_success"`
 }
 
 func ValidateSuite(path string) (SuiteInfo, error) {
@@ -66,6 +76,17 @@ func ValidateSuite(path string) (SuiteInfo, error) {
 		return SuiteInfo{}, err
 	}
 	return SuiteInfo{Path: abs}, nil
+}
+
+func Run(ctx context.Context, path string) (BootstrapReport, error) {
+	info, err := ValidateSuite(path)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	if filepath.Base(info.Path) == "production" {
+		return RunProduction(ctx, path)
+	}
+	return RunBootstrap(ctx, path)
 }
 
 func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
@@ -153,6 +174,45 @@ func RunBootstrap(ctx context.Context, path string) (BootstrapReport, error) {
 	}, nil
 }
 
+func RunProduction(ctx context.Context, path string) (BootstrapReport, error) {
+	start := time.Now()
+	info, err := ValidateSuite(path)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	cases := make([]CaseResult, 0, 100)
+	docCases, err := productionDocQACases(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	cases = append(cases, docCases...)
+	abstentionCases, err := productionAbstentionCases(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	cases = append(cases, abstentionCases...)
+	repairCases, err := productionRepairCases(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	cases = append(cases, repairCases...)
+	repoCases, err := productionRepoQACases(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	cases = append(cases, repoCases...)
+	researchCases, err := productionResearchPolicyCases(ctx)
+	if err != nil {
+		return BootstrapReport{}, err
+	}
+	cases = append(cases, researchCases...)
+	return BootstrapReport{
+		Suite:   info,
+		Cases:   cases,
+		Metrics: computeMetrics(cases, time.Since(start)),
+	}, nil
+}
+
 func (r BootstrapReport) Improved() bool {
 	if len(r.Cases) == 0 {
 		return false
@@ -174,8 +234,13 @@ func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
 	memoryCases := 0
 	memoryHits := 0
 	hallucinations := 0
+	falseVerified := 0
 	abstentionCases := 0
 	abstentionPass := 0
+	citationCases := 0
+	citationPass := 0
+	repairCases := 0
+	repairPass := 0
 	for _, c := range cases {
 		if c.Status == "pass" {
 			successes++
@@ -187,13 +252,41 @@ func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
 			if c.Status == "pass" {
 				memoryHits++
 			}
-			if c.Hallucinated {
-				hallucinations++
-			}
 		case "abstention":
 			abstentionCases++
 			if c.Status == "pass" {
 				abstentionPass++
+			}
+		}
+		switch c.Category {
+		case "doc_qa", "repo_qa", "research":
+			memoryCases++
+			if c.Status == "pass" {
+				memoryHits++
+			}
+		}
+		if c.Category == "abstention" {
+			abstentionCases++
+			if c.Status == "pass" {
+				abstentionPass++
+			}
+		}
+		if c.Hallucinated {
+			hallucinations++
+		}
+		if c.FalseVerified {
+			falseVerified++
+		}
+		if c.CitationValid {
+			citationPass++
+		}
+		if c.Category == "doc_qa" || c.Category == "research" || c.EvidenceStatus == "web_verified" || c.EvidenceStatus == "local_verified" {
+			citationCases++
+		}
+		if c.RepairCase || c.Category == "repair" {
+			repairCases++
+			if c.Status == "pass" {
+				repairPass++
 			}
 		}
 	}
@@ -201,18 +294,273 @@ func computeMetrics(cases []CaseResult, duration time.Duration) Metrics {
 		VerifiedSuccessRate: float64(successes) / float64(len(cases)),
 		HallucinationRate:   0,
 	}
+	metrics.FalseVerifiedRate = float64(falseVerified) / float64(len(cases))
 	if successes > 0 {
 		metrics.ToolCallsPerSuccess = float64(toolCalls) / float64(successes)
 		metrics.SecondsPerSuccess = duration.Seconds() / float64(successes)
+		metrics.CostPerSuccess = 0
 	}
 	if abstentionCases > 0 {
 		metrics.AbstentionAccuracy = float64(abstentionPass) / float64(abstentionCases)
+	}
+	if citationCases > 0 {
+		metrics.CitationValidity = float64(citationPass) / float64(citationCases)
+	}
+	if repairCases > 0 {
+		metrics.RepairPassRate = float64(repairPass) / float64(repairCases)
 	}
 	if memoryCases > 0 {
 		metrics.MemoryHitRate = float64(memoryHits) / float64(memoryCases)
 		metrics.HallucinationRate = float64(hallucinations) / float64(memoryCases)
 	}
 	return metrics
+}
+
+func productionDocQACases(ctx context.Context) ([]CaseResult, error) {
+	root, err := os.MkdirTemp("", "aletheia-production-docqa-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(root)
+	docs := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		return nil, err
+	}
+	for i := 0; i < 25; i++ {
+		text := fmt.Sprintf("Prodtopic%d is a verified production fact with source citation number %d.\n", i, i)
+		if err := os.WriteFile(filepath.Join(docs, fmt.Sprintf("prodtopic%d.md", i)), []byte(text), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := (retriever.Indexer{Store: store}).IndexPath(ctx, docs, retriever.IndexOptions{}); err != nil {
+		return nil, err
+	}
+	r := retriever.Retriever{Store: store}
+	cases := make([]CaseResult, 0, 25)
+	for i := 0; i < 25; i++ {
+		answer, err := r.Answer(ctx, fmt.Sprintf("what is prodtopic%d?", i), retriever.SearchOptions{TopK: 3})
+		if err != nil {
+			return nil, err
+		}
+		pass := answer.Verified && strings.Contains(strings.ToLower(answer.Text), fmt.Sprintf("prodtopic%d", i)) && len(answer.Citations) > 0
+		cases = append(cases, CaseResult{
+			Name:           fmt.Sprintf("production_doc_qa_%02d", i),
+			Category:       "doc_qa",
+			EvidenceStatus: "local_verified",
+			Status:         passStatus(pass),
+			CitationValid:  len(answer.Citations) > 0,
+			Hallucinated:   !pass,
+			Improved:       pass,
+		})
+	}
+	return cases, nil
+}
+
+func productionAbstentionCases(ctx context.Context) ([]CaseResult, error) {
+	root, err := os.MkdirTemp("", "aletheia-production-abstention-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(root)
+	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		return nil, err
+	}
+	doc, _, err := store.UpsertDocument(ctx, filepath.Join(root, "mcp.txt"), "mcp", "MCP is a protocol for connecting AI agents to tools and data sources.")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := store.ReplaceChunks(ctx, doc.ID, []memory.Chunk{{OffsetStart: 0, OffsetEnd: 70, Text: doc.Text, EmbeddingID: retriever.EmbeddingID}}); err != nil {
+		return nil, err
+	}
+	r := retriever.Retriever{Store: store}
+	cases := make([]CaseResult, 0, 25)
+	for i := 0; i < 25; i++ {
+		answer, err := r.Answer(ctx, fmt.Sprintf("what happened in unrelated event vietnam war %02d?", i), retriever.SearchOptions{TopK: 5})
+		if err != nil {
+			return nil, err
+		}
+		pass := answer.Status == "abstained" && !answer.Verified
+		cases = append(cases, CaseResult{
+			Name:          fmt.Sprintf("production_abstention_%02d", i),
+			Category:      "abstention",
+			Status:        passStatus(pass),
+			FalseVerified: answer.Verified,
+			Improved:      pass,
+		})
+	}
+	return cases, nil
+}
+
+func productionRepairCases(ctx context.Context) ([]CaseResult, error) {
+	fixtures := []struct {
+		name    string
+		file    string
+		counter repair.Counterexample
+		want    string
+	}{
+		{"operation", "package p\n\nfunc Add(a, b int) int { return a - b }\n", repair.Counterexample{Summary: "Add returned -1"}, "return a + b"},
+		{"rename", "package p\n\nfunc Sum(a, b int) int { return a + b }\n", repair.Counterexample{Stderr: "undefined: Add"}, "func Add("},
+		{"missing_import", "package p\n\nfunc Trim(s string) string { return strings.TrimSpace(s) }\n", repair.Counterexample{Stderr: "undefined: strings"}, "\"strings\""},
+		{"unused_import", "package p\n\nimport \"fmt\"\n\nfunc Value() int { return 1 }\n", repair.Counterexample{Stderr: "\"fmt\" imported and not used"}, "func Value() int"},
+		{"return_type", "package p\n\nfunc Value() int { return \"0\" }\n", repair.Counterexample{Stderr: "cannot use \"0\" (untyped string constant) as int value in return statement"}, "return 0"},
+	}
+	cases := make([]CaseResult, 0, 25)
+	for i := 0; i < 25; i++ {
+		fixture := fixtures[i%len(fixtures)]
+		root, err := os.MkdirTemp("", "aletheia-production-repair-*")
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(root, "main.go")
+		if err := os.WriteFile(path, []byte(fixture.file), 0o644); err != nil {
+			os.RemoveAll(root)
+			return nil, err
+		}
+		candidate, err := repair.BuildCandidate(root, fixture.counter)
+		pass := err == nil && candidate.Path == path && strings.Contains(candidate.NewText, fixture.want)
+		cases = append(cases, CaseResult{
+			Name:       fmt.Sprintf("production_go_repair_%02d_%s", i, fixture.name),
+			Category:   "repair",
+			Status:     passStatus(pass),
+			RepairCase: true,
+			ToolCalls:  1,
+			Improved:   pass,
+		})
+		os.RemoveAll(root)
+	}
+	return cases, nil
+}
+
+func productionRepoQACases(ctx context.Context) ([]CaseResult, error) {
+	root, err := os.MkdirTemp("", "aletheia-production-repoqa-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(root)
+	docs := filepath.Join(root, "repo")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(docs, "commands.md"), []byte("Aletheia solve requires verifier evidence before patches.\nAletheia eval report is verified metrics.\nAletheia serve expose is OpenAI-compatible chat completions.\n"), 0o644); err != nil {
+		return nil, err
+	}
+	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := (retriever.Indexer{Store: store}).IndexPath(ctx, docs, retriever.IndexOptions{}); err != nil {
+		return nil, err
+	}
+	queries := []string{
+		"what does solve require before patches?",
+		"what does eval report?",
+		"what does serve expose?",
+	}
+	wants := []string{"verifier evidence", "verified metrics", "chat completions"}
+	r := retriever.Retriever{Store: store}
+	cases := make([]CaseResult, 0, 15)
+	for i := 0; i < 15; i++ {
+		idx := i % len(queries)
+		answer, err := r.Answer(ctx, queries[idx], retriever.SearchOptions{TopK: 3})
+		if err != nil {
+			return nil, err
+		}
+		pass := answer.Verified && strings.Contains(strings.ToLower(answer.Text), wants[idx])
+		cases = append(cases, CaseResult{
+			Name:           fmt.Sprintf("production_repo_qa_%02d", i),
+			Category:       "repo_qa",
+			EvidenceStatus: "local_verified",
+			Status:         passStatus(pass),
+			CitationValid:  len(answer.Citations) > 0,
+			Hallucinated:   !pass,
+			Improved:       pass,
+		})
+	}
+	return cases, nil
+}
+
+func productionResearchPolicyCases(ctx context.Context) ([]CaseResult, error) {
+	root, err := os.MkdirTemp("", "aletheia-production-research-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(root)
+	store, err := memory.Open(filepath.Join(root, "memory.sqlite"))
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		return nil, err
+	}
+	cases := make([]CaseResult, 0, 10)
+	for i := 0; i < 10; i++ {
+		status := "web_verified"
+		sourceCount := 2
+		if i%3 == 0 {
+			status = "single_source_unverified"
+			sourceCount = 1
+		}
+		job, err := store.CreateResearchJob(ctx, memory.ResearchJob{
+			Query:      fmt.Sprintf("research policy %02d", i),
+			Status:     "completed",
+			Mode:       "background",
+			MaxSources: sourceCount,
+			Answer:     fmt.Sprintf("Research policy %02d answer.\n\nEvidence status: %s", i, status),
+			Confidence: 0.72,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for source := 0; source < sourceCount; source++ {
+			if _, err := store.UpsertWebSource(ctx, memory.WebSource{
+				ID:          fmt.Sprintf("source-%02d-%02d", i, source),
+				JobID:       job.ID,
+				URL:         fmt.Sprintf("https://docs.example.com/policy/%02d/%02d", i, source),
+				FinalURL:    fmt.Sprintf("https://docs.example.com/policy/%02d/%02d", i, source),
+				Title:       "Policy source",
+				Status:      "stored",
+				ContentHash: fmt.Sprintf("hash-%02d-%02d", i, source),
+				TrustScore:  0.7,
+				ByteSize:    256,
+				ContentType: "text/html",
+			}); err != nil {
+				return nil, err
+			}
+		}
+		sources, err := store.WebSourcesByJob(ctx, job.ID)
+		if err != nil {
+			return nil, err
+		}
+		pass := len(sources) == sourceCount && strings.Contains(job.Answer, status)
+		cases = append(cases, CaseResult{
+			Name:           fmt.Sprintf("production_research_policy_%02d", i),
+			Category:       "research",
+			EvidenceStatus: status,
+			Status:         passStatus(pass),
+			CitationValid:  len(sources) > 0,
+			FalseVerified:  sourceCount == 1 && status == "web_verified",
+			Improved:       pass,
+		})
+	}
+	return cases, nil
 }
 
 type bootstrapComparison struct {

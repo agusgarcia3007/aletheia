@@ -783,7 +783,7 @@ func runEval(args []string) error {
 		return fmt.Errorf("--suite is required")
 	}
 
-	report, err := eval.RunBootstrap(context.Background(), *suitePath)
+	report, err := eval.Run(context.Background(), *suitePath)
 	if err != nil {
 		return err
 	}
@@ -793,7 +793,7 @@ func runEval(args []string) error {
 		return encoder.Encode(report)
 	}
 	fmt.Printf("eval suite: %s\n", report.Suite.Path)
-	fmt.Printf("status: bootstrap ready\n")
+	fmt.Printf("status: %s ready\n", filepath.Base(report.Suite.Path))
 	for _, c := range report.Cases {
 		fmt.Printf("%s:\n", c.Name)
 		if c.Status != "" {
@@ -822,11 +822,15 @@ func runEval(args []string) error {
 	fmt.Printf("  verified_success_rate: %.4f\n", report.Metrics.VerifiedSuccessRate)
 	fmt.Printf("  hallucination_rate: %.4f\n", report.Metrics.HallucinationRate)
 	fmt.Printf("  abstention_accuracy: %.4f\n", report.Metrics.AbstentionAccuracy)
+	fmt.Printf("  false_verified_rate: %.4f\n", report.Metrics.FalseVerifiedRate)
+	fmt.Printf("  citation_validity: %.4f\n", report.Metrics.CitationValidity)
+	fmt.Printf("  repair_pass_rate: %.4f\n", report.Metrics.RepairPassRate)
 	fmt.Printf("  tool_calls_per_success: %.4f\n", report.Metrics.ToolCallsPerSuccess)
 	fmt.Printf("  seconds_per_success: %.4f\n", report.Metrics.SecondsPerSuccess)
 	fmt.Printf("  memory_hit_rate: %.4f\n", report.Metrics.MemoryHitRate)
+	fmt.Printf("  cost_per_success: %.4f\n", report.Metrics.CostPerSuccess)
 	if !report.Improved() {
-		return fmt.Errorf("eval bootstrap did not show beam improvement")
+		return fmt.Errorf("eval suite did not pass release gates")
 	}
 	return nil
 }
@@ -998,6 +1002,7 @@ func runJobs(args []string) error {
 	configPath := fs.String("config", "", "configuration YAML path")
 	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	limit := fs.Int("limit", 20, "maximum jobs to list")
+	includeFailed := fs.Bool("include-failed", false, "include failed research jobs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1019,6 +1024,15 @@ func runJobs(args []string) error {
 	jobs, err := store.ListResearchJobs(context.Background(), *limit)
 	if err != nil {
 		return err
+	}
+	if !*includeFailed {
+		filtered := jobs[:0]
+		for _, job := range jobs {
+			if job.Status != "failed" {
+				filtered = append(filtered, job)
+			}
+		}
+		jobs = filtered
 	}
 	fmt.Printf("jobs: %d\n", len(jobs))
 	for _, job := range jobs {
@@ -1079,9 +1093,11 @@ func runLearn(args []string) error {
 	fmt.Printf("learn_out: %s\n", report.OutDir)
 	fmt.Printf("selector_examples: %d\n", report.SelectorExamples)
 	fmt.Printf("verified_trajectories: %d\n", report.VerifiedTrajectories)
+	fmt.Printf("research_examples: %d\n", report.ResearchExamples)
 	fmt.Printf("skills: %d\n", report.Skills)
 	fmt.Printf("selector_dataset: %s\n", report.SelectorDatasetPath)
 	fmt.Printf("trajectory_dataset: %s\n", report.TrajectoryDatasetPath)
+	fmt.Printf("research_dataset: %s\n", report.ResearchDatasetPath)
 	if report.SelectorCheckpoint != "" {
 		fmt.Printf("selector_checkpoint: %s\n", report.SelectorCheckpoint)
 		fmt.Printf("selector_final_accuracy: %.4f\n", report.SelectorTrainReport.FinalAccuracy)

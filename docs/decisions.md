@@ -173,3 +173,12 @@
 - Block social domains by default and enforce timeout, max bytes, redirect, content-type, and user-agent policy in the HTTP fetcher.
 - Treat single-source web evidence as unverified support, not verified truth.
 - Keep research free of paid APIs, remote LLM APIs, shell execution, and repository mutation.
+
+## Milestone Production V1
+
+- Compete as a verified agent on VPS CPU, not as a general chatbot or parametric knowledge model.
+- Keep `aletheia-mikros` narrow; use memory, research, repair, and verifiers as the production differentiator.
+- Add `evals/production` as a deterministic 100-case release gate with false-verified, citation-validity, abstention, repair, latency, and cost metrics.
+- Prefer completed research answers before extracting ad hoc sentences from chunks; never reuse unrelated web memory when substantive query terms do not overlap.
+- Use SQLite WAL, `/readyz`, `/metrics`, and filtered job listings as the minimum production operations surface.
+- Extend Go repair only through bounded deterministic patch candidates that still require verifier pass before materialization.

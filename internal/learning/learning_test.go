@@ -48,6 +48,13 @@ func TestRunExportsSelectorExamplesAndVerifiedTrajectories(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	job, err := store.CreateResearchJob(ctx, memory.ResearchJob{ID: "research-1", Query: "what is MCP", Status: "completed", Mode: "background", Answer: "MCP is a protocol.", Confidence: 0.8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertWebSource(ctx, memory.WebSource{ID: "source-1", JobID: job.ID, URL: "https://example.com/mcp", FinalURL: "https://example.com/mcp", Title: "MCP", Status: "stored", ContentHash: "hash", TrustScore: 0.8, ByteSize: 128, ContentType: "text/html"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +64,7 @@ func TestRunExportsSelectorExamplesAndVerifiedTrajectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.SelectorExamples != 1 || report.VerifiedTrajectories != 1 {
+	if report.SelectorExamples != 1 || report.VerifiedTrajectories != 1 || report.ResearchExamples != 1 {
 		t.Fatalf("report = %+v", report)
 	}
 	raw, err := os.ReadFile(report.SelectorDatasetPath)
@@ -73,5 +80,12 @@ func TestRunExportsSelectorExamplesAndVerifiedTrajectories(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"verified":true`) {
 		t.Fatalf("trajectory dataset:\n%s", raw)
+	}
+	raw, err = os.ReadFile(report.ResearchDatasetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "MCP is a protocol") || !strings.Contains(string(raw), "https://example.com/mcp") {
+		t.Fatalf("research dataset:\n%s", raw)
 	}
 }

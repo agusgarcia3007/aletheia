@@ -164,6 +164,10 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 
@@ -177,6 +181,13 @@ func (s *Store) Close() error {
 func (s *Store) Migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
+}
+
+func (s *Store) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("memory store is not open")
+	}
+	return s.db.PingContext(ctx)
 }
 
 func (s *Store) CreateEpisode(ctx context.Context, goal string) (int64, error) {

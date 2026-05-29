@@ -10,6 +10,7 @@ go run ./cmd/aletheia train --config configs/aletheia-mikros.yaml --dataset data
 go run ./cmd/aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
 go run ./cmd/aletheia solve --task examples/buggy-go/task.json --trace
 go run ./cmd/aletheia eval --suite evals/bootstrap --json
+go run ./cmd/aletheia eval --suite evals/production --json
 ```
 
 Useful inspection commands:
@@ -29,7 +30,7 @@ Opt-in features:
 - `solve --fuzz` and `solve --bench` for costly Go verifiers.
 - `learn --db ... --out ...` for manual local dataset export.
 - `serve` for an OpenAI-compatible inference API around a local checkpoint.
-- `research --query ...` for opt-in SearXNG-backed evidence collection.
+- SearXNG-backed research can fill chat knowledge gaps; `research --query ...` remains available for manual ops.
 
 OpenAI-compatible local API:
 
@@ -72,7 +73,7 @@ const response = await client.chat.completions.create({
 console.log(response.choices[0].message.content);
 ```
 
-`aletheia-mikros` is the first public checkpoint/profile: a small local model with stable basic conversation and Aletheia command help. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
+`aletheia-mikros` is the first public checkpoint/profile: a small local model with stable basic conversation and Aletheia command help. The product target is a verified agent, not a general chatbot: local memory, SearXNG research, repair, and verifiers must beat guessing. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
 
 See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.
 
