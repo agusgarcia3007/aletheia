@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -37,17 +39,18 @@ type Options struct {
 }
 
 type Server struct {
-	opts      Options
-	manifest  model.Manifest
-	tokenizer *tokenizer.Tokenizer
-	runner    runner.Runner
-	store     *memory.Store
-	research  research.Options
-	created   int64
-	nextID    atomic.Uint64
-	requests  atomic.Uint64
-	chats     atomic.Uint64
-	queued    atomic.Uint64
+	opts         Options
+	manifest     model.Manifest
+	tokenizer    *tokenizer.Tokenizer
+	runner       runner.Runner
+	chatExamples []trainedChatExample
+	store        *memory.Store
+	research     research.Options
+	created      int64
+	nextID       atomic.Uint64
+	requests     atomic.Uint64
+	chats        atomic.Uint64
+	queued       atomic.Uint64
 }
 
 func New(opts Options) (*Server, error) {
@@ -66,14 +69,19 @@ func New(opts Options) (*Server, error) {
 	if opts.ModelName == "" {
 		opts.ModelName = manifest.Config.Name
 	}
+	chatExamples, err := loadTrainedChatExamples(opts.Checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("load chat examples: %w", err)
+	}
 	return &Server{
-		opts:      opts,
-		manifest:  manifest,
-		tokenizer: tok,
-		runner:    runner.New(m, tok),
-		store:     opts.Store,
-		research:  opts.Research,
-		created:   time.Now().Unix(),
+		opts:         opts,
+		manifest:     manifest,
+		tokenizer:    tok,
+		runner:       runner.New(m, tok),
+		chatExamples: chatExamples,
+		store:        opts.Store,
+		research:     opts.Research,
+		created:      time.Now().Unix(),
 	}, nil
 }
 
@@ -223,7 +231,48 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "messages", "invalid_messages", err.Error())
 		return
 	}
-	if reply, ok := basicMikrosChatReply(s.opts.ModelName, req.Messages); ok {
+	if reply, ok := mikrosPolicyReply(s.opts.ModelName, req.Messages); ok {
+		writeJSON(w, http.StatusOK, s.chatResponse(reply, s.textUsage(prompt, reply)))
+		return
+	}
+	if reply, ok := s.trainedExampleReply(req.Messages); ok {
+		writeJSON(w, http.StatusOK, s.chatResponse(reply, s.textUsage(prompt, reply)))
+		return
+	}
+	if s.manifest.Step == 0 {
+		if reply, ok := basicMikrosChatReply(s.opts.ModelName, req.Messages); ok {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"id":      s.id("chatcmpl"),
+				"object":  "chat.completion",
+				"created": time.Now().Unix(),
+				"model":   s.opts.ModelName,
+				"choices": []map[string]any{
+					{
+						"index": 0,
+						"message": map[string]any{
+							"role":    "assistant",
+							"content": reply,
+						},
+						"finish_reason": "stop",
+					},
+				},
+				"usage": s.textUsage(prompt, reply),
+			})
+			return
+		}
+	}
+	query := strings.TrimSpace(lastUserMessage(req.Messages))
+	if query != "" && isChatActionRequest(query) {
+		generated, usage, err := s.generate(prompt, generationOptions{
+			MaxTokens:   req.MaxTokens,
+			Temperature: req.Temperature,
+			TopP:        req.TopP,
+			TopK:        req.TopK,
+		})
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "server_error", "", "generation_failed", err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":      s.id("chatcmpl"),
 			"object":  "chat.completion",
@@ -234,17 +283,21 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					"index": 0,
 					"message": map[string]any{
 						"role":    "assistant",
-						"content": reply,
+						"content": generated,
 					},
 					"finish_reason": "stop",
 				},
 			},
-			"usage": s.textUsage(prompt, reply),
+			"usage": usage,
 		})
 		return
 	}
-	query := strings.TrimSpace(lastUserMessage(req.Messages))
 	if query != "" && s.store != nil {
+		if isUnsupportedFutureOutcomeQuestion(query) {
+			content := "No tengo evidencia suficiente para responder eso como hecho verificado. La pregunta pide un resultado futuro o no confirmado; necesito fuentes directas y actuales antes de afirmarlo."
+			writeJSON(w, http.StatusOK, s.chatResponse(content, s.textUsage(prompt, content)))
+			return
+		}
 		if answer, ok := s.completedResearchAnswer(r.Context(), query); ok {
 			writeJSON(w, http.StatusOK, s.chatResponse(answer, s.textUsage(prompt, answer)))
 			return
@@ -579,6 +632,9 @@ func shouldResearch(query string, mode string, opts research.Options) bool {
 	if mode == "off" || !opts.Enabled {
 		return false
 	}
+	if isChatActionRequest(query) || isUnsupportedFutureOutcomeQuestion(query) {
+		return false
+	}
 	if mode == "sync" || mode == "background" {
 		return !isCodingTask(query)
 	}
@@ -604,20 +660,35 @@ func (s *Server) completedResearchAnswer(ctx context.Context, query string) (str
 		if meaningfulOverlap(queryTokens, meaningfulChatTokens(job.Query+" "+job.Answer)) < requiredMeaningfulOverlap(len(queryTokens)) {
 			continue
 		}
+		if !researchAnswerMatchesQuery(query, job) {
+			continue
+		}
 		sources, _ := s.store.WebSourcesByJob(ctx, job.ID)
-		return formatResearchAnswer(job, sources), true
+		claims, _ := s.store.WebClaimsByJob(ctx, job.ID)
+		answer, ok := formatResearchAnswer(query, job, sources, claims)
+		if !ok {
+			continue
+		}
+		return answer, true
 	}
 	return "", false
 }
 
-func formatResearchAnswer(job memory.ResearchJob, sources []memory.WebSource) string {
+func formatResearchAnswer(query string, job memory.ResearchJob, sources []memory.WebSource, claims []memory.WebClaim) (string, bool) {
+	answer := bestPublicResearchAnswer(query, job, sources, claims)
+	if answer == "" {
+		return "", false
+	}
 	var b strings.Builder
-	b.WriteString(strings.TrimSpace(job.Answer))
+	b.WriteString(strings.TrimSpace(answer))
 	if len(sources) > 0 {
 		b.WriteString("\n\nFuentes:\n")
 		seen := map[string]bool{}
 		written := 0
 		for _, source := range sources {
+			if !publicWebSourceAllowed(source) {
+				continue
+			}
 			url := source.FinalURL
 			if url == "" {
 				url = source.URL
@@ -637,7 +708,117 @@ func formatResearchAnswer(job memory.ResearchJob, sources []memory.WebSource) st
 			}
 		}
 	}
-	return strings.TrimSpace(b.String())
+	return strings.TrimSpace(b.String()), true
+}
+
+func bestPublicResearchAnswer(query string, job memory.ResearchJob, sources []memory.WebSource, claims []memory.WebClaim) string {
+	queryTokens := meaningfulChatTokens(query)
+	sourceTitles := map[string]bool{}
+	for _, source := range sources {
+		if publicWebSourceAllowed(source) {
+			sourceTitles[normalizeBasicChat(source.Title)] = true
+		}
+	}
+	type scoredClaim struct {
+		text  string
+		score int
+	}
+	var best scoredClaim
+	for _, claim := range claims {
+		text := strings.TrimSpace(claim.Claim)
+		normalized := normalizeBasicChat(text)
+		if sourceTitles[normalized] || looksLikeTitleOnly(text) {
+			continue
+		}
+		score := meaningfulOverlap(queryTokens, meaningfulChatTokens(text))
+		if score < requiredMeaningfulOverlap(len(queryTokens)) {
+			continue
+		}
+		if score > best.score || best.text == "" {
+			best = scoredClaim{text: text, score: score}
+		}
+	}
+	if best.text != "" {
+		return withEvidenceStatus(best.text, evidenceStatusFromAnswer(job.Answer))
+	}
+	answer := strings.TrimSpace(job.Answer)
+	if answer == "" || looksLikeTitleOnly(answer) || !researchAnswerMatchesQuery(query, job) {
+		return ""
+	}
+	return answer
+}
+
+func withEvidenceStatus(text string, status string) string {
+	if status == "" || strings.Contains(strings.ToLower(text), "evidence status:") {
+		return text
+	}
+	return fmt.Sprintf("%s\n\nEvidence status: %s", text, status)
+}
+
+func evidenceStatusFromAnswer(answer string) string {
+	for _, line := range strings.Split(answer, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "evidence status:") {
+			return strings.TrimSpace(line[len("Evidence status:"):])
+		}
+	}
+	return research.StatusWebSupported
+}
+
+func looksLikeTitleOnly(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return true
+	}
+	if strings.Contains(text, "\n\n") || len([]rune(text)) > 220 {
+		return false
+	}
+	terminal := strings.HasSuffix(text, ".") || strings.HasSuffix(text, "!") || strings.HasSuffix(text, "?")
+	return !terminal || strings.Contains(strings.ToLower(text), " - wikipedia") || strings.Contains(strings.ToLower(text), " | ")
+}
+
+func publicWebSourceAllowed(source memory.WebSource) bool {
+	title := strings.ToLower(strings.TrimSpace(source.Title))
+	if title == "blocked" || strings.Contains(title, "blocked") {
+		return false
+	}
+	raw := source.FinalURL
+	if raw == "" {
+		raw = source.URL
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	blocked := []string{
+		"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com",
+		"reddit.com", "turiver.com",
+	}
+	for _, domain := range blocked {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return false
+		}
+	}
+	return raw != ""
+}
+
+func researchAnswerMatchesQuery(query string, job memory.ResearchJob) bool {
+	if isUnsupportedFutureOutcomeQuestion(query) {
+		return false
+	}
+	years := fourDigitYears(query)
+	if len(years) == 0 {
+		return true
+	}
+	answer := job.Answer
+	for _, year := range years {
+		if !strings.Contains(answer, year) {
+			return false
+		}
+	}
+	return true
 }
 
 func meaningfulChatTokens(text string) map[string]bool {
@@ -669,6 +850,11 @@ func requiredMeaningfulOverlap(tokenCount int) int {
 	return 2
 }
 
+func isChatActionRequest(query string) bool {
+	normalized := normalizeBasicChat(query)
+	return isRepoRepairRequest(normalized) || isCodeGenerationRequest(normalized)
+}
+
 var chatStopWords = map[string]bool{
 	"a": true, "an": true, "and": true, "are": true, "as": true, "by": true, "for": true, "from": true,
 	"how": true, "is": true, "it": true, "of": true, "on": true, "or": true, "the": true, "to": true,
@@ -688,6 +874,38 @@ func isCodingTask(query string) bool {
 		strings.Contains(normalized, "patch") ||
 		strings.Contains(normalized, "codigo") ||
 		strings.Contains(normalized, "code")
+}
+
+var yearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)
+
+func fourDigitYears(text string) []string {
+	matches := yearRe.FindAllString(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var years []string
+	for _, year := range matches {
+		if !seen[year] {
+			seen[year] = true
+			years = append(years, year)
+		}
+	}
+	return years
+}
+
+func isUnsupportedFutureOutcomeQuestion(query string) bool {
+	normalized := normalizeBasicChat(query)
+	if !hasAny(normalized, "gano", "ganador", "campeon", "resultado", "winner", "won", "champion", "result") {
+		return false
+	}
+	for _, year := range fourDigitYears(normalized) {
+		value, err := strconv.Atoi(year)
+		if err == nil && value > time.Now().Year() {
+			return true
+		}
+	}
+	return false
 }
 
 func formatCitations(citations []retriever.Citation) string {

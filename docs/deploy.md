@@ -20,7 +20,7 @@ ALETHEIA_CHECKPOINT=/app/checkpoints/aletheia-mikros
 ALETHEIA_MODEL=aletheia-mikros
 ```
 
-The Dockerfile is self-contained for the default API model: it builds the Go binary and writes a zero-step `aletheia-mikros` bootstrap checkpoint inside the image. Runtime chat responses for this first public version are stabilized by the server profile, so deploys do not retrain the model on every build. The runtime image contains the binary and that single checkpoint.
+The Dockerfile is self-contained for the default API model: it builds the Go binary and writes an `aletheia-mikros` checkpoint inside the image. By default `ALETHEIA_TRAIN_STEPS=0`, which creates a bootstrap checkpoint without retraining on every deploy. For a real trained chat model in a fresh Dokploy build, set the Docker build arg `ALETHEIA_TRAIN_STEPS=450` or train locally and deploy/mount the resulting `checkpoints/aletheia-mikros`. Deterministic chat responses are only the zero-step fallback; trained checkpoints answer through the model plus router/research policy.
 
 ## API Smoke
 

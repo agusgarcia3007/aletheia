@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,6 +186,102 @@ func TestChatSmalltalkDoesNotCreateResearchJob(t *testing.T) {
 	}
 }
 
+func TestChatActionRequestsDoNotTriggerResearch(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServer(t, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	cases := []struct {
+		message string
+		want    string
+	}{
+		{message: "haz un componente de react", want: ""},
+		{message: "arregla este repo de Go que falla go test ./...", want: "aletheia solve"},
+	}
+	for _, tt := range cases {
+		body := `{"model":"aletheia-mikros","messages":[{"role":"user","content":"` + tt.message + `"}]}`
+		rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("message %q status = %d body=%s", tt.message, rec.Code, rec.Body.String())
+		}
+		if tt.want != "" && !strings.Contains(rec.Body.String(), tt.want) {
+			t.Fatalf("message %q body=%s", tt.message, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "job_id=") || strings.Contains(rec.Body.String(), "Fuentes:") {
+			t.Fatalf("message %q body=%s", tt.message, rec.Body.String())
+		}
+	}
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestChatUsesTrainedExamplesForActionRequests(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServerWithExamples(t, []string{
+		`{"prompt":"<USER>haz un componente de react<ASSISTANT>","completion":"export function GreetingCard() { return <section>Hola</section> }<EOS>"}`,
+	}, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"haz un componente de react"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "GreetingCard") || strings.Contains(rec.Body.String(), "job_id=") || strings.Contains(rec.Body.String(), "Fuentes:") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestChatFutureOutcomeAbstainsWithoutResearch(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServer(t, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"quien gano la copa mundial de futbol 2038?"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "No tengo evidencia suficiente") || strings.Contains(rec.Body.String(), "web_verified") || strings.Contains(rec.Body.String(), "job_id=") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
 func TestChatKnowledgeGapQueuesResearchJob(t *testing.T) {
 	store := newTestStore(t)
 	server := newTestServer(t, Options{
@@ -217,7 +314,7 @@ func TestChatUsesCompletedResearchAnswerBeforeRetriever(t *testing.T) {
 		Status:     "completed",
 		Mode:       "background",
 		MaxSources: 2,
-		Answer:     "The Model Context Protocol (MCP) is an open protocol for connecting AI agents to tools and data sources.",
+		Answer:     "Model Context Protocol\n\nEvidence status: web_verified\nSource: https://modelcontextprotocol.io/docs/getting-started/intro",
 		Confidence: 0.8,
 	})
 	if err != nil {
@@ -237,14 +334,65 @@ func TestChatUsesCompletedResearchAnswerBeforeRetriever(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.RecordWebClaim(contextBackground(), memory.WebClaim{
+		ID:         "claim-mcp-title",
+		SourceID:   "source-mcp",
+		Claim:      "Model Context Protocol",
+		Confidence: 0.90,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordWebClaim(contextBackground(), memory.WebClaim{
+		ID:         "claim-mcp-definition",
+		SourceID:   "source-mcp",
+		Claim:      "The Model Context Protocol (MCP) is an open protocol for connecting AI agents to tools and data sources.",
+		Confidence: 0.80,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	server := newTestServer(t, Options{
 		APIKey:   "secret",
 		Store:    store,
 		Research: research.Options{Enabled: true, AutoOnKnowledgeGap: true, MinTrustScore: 0.35, MaxSources: 3},
 	})
 	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"que es un MCP?"}]}`, "secret")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Model Context Protocol") || !strings.Contains(rec.Body.String(), "https://modelcontextprotocol.io") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "open protocol") || !strings.Contains(rec.Body.String(), "https://modelcontextprotocol.io") {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChatDoesNotCiteBlockedResearchSources(t *testing.T) {
+	store := newTestStore(t)
+	job, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{
+		ID:         "research-blocked",
+		Query:      "what is MCP in agents?",
+		Status:     "completed",
+		Mode:       "background",
+		MaxSources: 2,
+		Answer:     "The Model Context Protocol connects agents with external tools.\n\nEvidence status: web_verified",
+		Confidence: 0.8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []memory.WebSource{
+		{ID: "source-reddit", JobID: job.ID, URL: "https://www.reddit.com/r/agents/comments/x", FinalURL: "https://www.reddit.com/r/agents/comments/x", Title: "Blocked", Status: "stored", ContentHash: "r", TrustScore: 0.1, ByteSize: 10, ContentType: "text/html"},
+		{ID: "source-official", JobID: job.ID, URL: "https://modelcontextprotocol.io/docs", FinalURL: "https://modelcontextprotocol.io/docs", Title: "MCP docs", Status: "stored", ContentHash: "o", TrustScore: 0.8, ByteSize: 10, ContentType: "text/html"},
+	} {
+		if _, err := store.UpsertWebSource(contextBackground(), source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.RecordWebClaim(contextBackground(), memory.WebClaim{ID: "claim-blocked", SourceID: "source-official", Claim: "The Model Context Protocol connects agents with external tools.", Confidence: 0.8}); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, Options{APIKey: "secret", Store: store, Research: research.Options{Enabled: true, AutoOnKnowledgeGap: true, MinTrustScore: 0.35}})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"what is MCP in agents?"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "reddit.com") || strings.Contains(rec.Body.String(), "Blocked") || !strings.Contains(rec.Body.String(), "modelcontextprotocol.io") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -340,7 +488,41 @@ func newNamedTestServer(t *testing.T, modelName string, opts Options) *Server {
 		t.Fatal(err)
 	}
 	m.Bias[int('H')] = 10
+	if err := m.Save(checkpoint, tok.VocabSize(), 0, 0.1); err != nil {
+		t.Fatal(err)
+	}
+	opts.Checkpoint = checkpoint
+	if opts.APIKey == "" && opts.Auth == "" {
+		opts.APIKey = "secret"
+	}
+	server, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server
+}
+
+func newTestServerWithExamples(t *testing.T, examples []string, opts Options) *Server {
+	t.Helper()
+	checkpoint := filepath.Join(t.TempDir(), "checkpoint")
+	tok := tokenizer.New()
+	m, err := model.New(model.Config{
+		Name:          "aletheia-mikros",
+		VocabSize:     tok.VocabSize(),
+		ContextLength: 64,
+		NLayers:       1,
+		NHeads:        2,
+		DModel:        16,
+		DFF:           32,
+		Seed:          7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := m.Save(checkpoint, tok.VocabSize(), 1, 0.1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkpoint, chatExamplesFile), []byte(strings.Join(examples, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	opts.Checkpoint = checkpoint

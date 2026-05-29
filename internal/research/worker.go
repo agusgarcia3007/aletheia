@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,7 +43,7 @@ func NewWorker(store *memory.Store, opts Options) Worker {
 		opts.UserAgent = "AletheiaResearchBot/0.1"
 	}
 	if len(opts.BlockedDomains) == 0 {
-		opts.BlockedDomains = []string{"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com"}
+		opts.BlockedDomains = []string{"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com", "reddit.com"}
 	}
 	return Worker{
 		Store: store,
@@ -157,8 +159,14 @@ func (w Worker) RunJob(ctx context.Context, job memory.ResearchJob) (ResearchRes
 	}
 
 	report.EvidenceStatus = evidenceStatus(report.SourcesStored, w.Options.MinSourcesForVerified)
-	report.Confidence = confidence(report.Sources)
-	report.Answer = answerFromSources(job.Query, report)
+	if unsupportedFutureOutcomeQuery(job.Query) {
+		report.EvidenceStatus = StatusInsufficientEvidence
+		report.Confidence = 0
+		report.Answer = fmt.Sprintf("No hay evidencia web suficiente para responder sobre %q. La pregunta pide un resultado futuro o no confirmado.", job.Query)
+	} else {
+		report.Confidence = confidence(report.Sources)
+		report.Answer = answerFromSources(job.Query, report)
+	}
 	job.Status = "completed"
 	job.CompletedAt = time.Now().UTC()
 	job.Answer = report.Answer
@@ -290,13 +298,68 @@ func confidence(sources []RankedSource) float64 {
 }
 
 func answerFromSources(query string, report ResearchResult) string {
+	best := ""
+	bestScore := -1
+	queryTokens := keywordSet(query)
 	for _, source := range report.Sources {
 		if source.Status != "stored" || len(source.Claims) == 0 {
 			continue
 		}
-		return fmt.Sprintf("%s\n\nEvidence status: %s\nSource: %s", source.Claims[0].Text, report.EvidenceStatus, source.Fetched.FinalURL)
+		sourceTitle := strings.TrimSpace(source.Extracted.Title)
+		if sourceTitle == "" {
+			sourceTitle = strings.TrimSpace(source.Title)
+		}
+		for _, claim := range source.Claims {
+			text := strings.TrimSpace(claim.Text)
+			if text == "" || strings.EqualFold(text, sourceTitle) || likelyTitle(text) {
+				continue
+			}
+			score := int(overlapScore(queryTokens, keywordSet(text)) * 100)
+			if score > bestScore {
+				best = text
+				bestScore = score
+			}
+		}
+	}
+	if best != "" {
+		for _, source := range report.Sources {
+			if source.Status == "stored" {
+				return fmt.Sprintf("%s\n\nEvidence status: %s\nSource: %s", best, report.EvidenceStatus, source.Fetched.FinalURL)
+			}
+		}
 	}
 	return fmt.Sprintf("No hay evidencia web suficiente para responder sobre %q.", query)
+}
+
+func likelyTitle(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" || len([]rune(text)) > 220 {
+		return false
+	}
+	return !strings.HasSuffix(text, ".") || strings.Contains(text, " - ") || strings.Contains(text, " | ")
+}
+
+var researchYearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)
+
+func unsupportedFutureOutcomeQuery(query string) bool {
+	normalized := strings.ToLower(query)
+	if !(strings.Contains(normalized, "gano") ||
+		strings.Contains(normalized, "ganador") ||
+		strings.Contains(normalized, "campeon") ||
+		strings.Contains(normalized, "resultado") ||
+		strings.Contains(normalized, "winner") ||
+		strings.Contains(normalized, "won") ||
+		strings.Contains(normalized, "champion") ||
+		strings.Contains(normalized, "result")) {
+		return false
+	}
+	for _, year := range researchYearRe.FindAllString(normalized, -1) {
+		value, err := strconv.Atoi(year)
+		if err == nil && value > time.Now().Year() {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceID(jobID string, rank int, rawURL string) string {

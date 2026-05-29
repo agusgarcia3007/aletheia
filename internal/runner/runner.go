@@ -73,14 +73,15 @@ func (r Runner) Generate(prompt string, opts Options) ([]int, error) {
 }
 
 func (r Runner) TopK(logits []float32, k int) ([]Candidate, error) {
-	if k <= 0 || k > len(logits) {
-		k = len(logits)
+	limit := r.validVocabSize(logits)
+	if k <= 0 || k > limit {
+		k = limit
 	}
-	probs, err := tensor.Softmax(logits)
+	probs, err := tensor.Softmax(logits[:limit])
 	if err != nil {
 		return nil, err
 	}
-	indices := make([]int, len(logits))
+	indices := make([]int, limit)
 	for i := range indices {
 		indices[i] = i
 	}
@@ -129,6 +130,8 @@ func (r Runner) Score(tokens []int) (float64, error) {
 }
 
 func (r Runner) nextToken(logits []float32, opts Options, step int) (int, error) {
+	limit := r.validVocabSize(logits)
+	logits = logits[:limit]
 	if opts.Temperature <= 0 {
 		return greedy(logits), nil
 	}
@@ -197,4 +200,15 @@ func greedy(logits []float32) int {
 		}
 	}
 	return best
+}
+
+func (r Runner) validVocabSize(logits []float32) int {
+	limit := len(logits)
+	if r.Tokenizer != nil && r.Tokenizer.VocabSize() < limit {
+		limit = r.Tokenizer.VocabSize()
+	}
+	if limit <= 0 {
+		return len(logits)
+	}
+	return limit
 }

@@ -42,6 +42,31 @@ func basicMikrosChatReply(modelName string, messages []chatMessage) (string, boo
 	}
 }
 
+func mikrosPolicyReply(modelName string, messages []chatMessage) (string, bool) {
+	if modelName != mikrosModelName {
+		return "", false
+	}
+	normalized := normalizeBasicChat(lastUserMessage(messages))
+	if isRepoRepairRequest(normalized) {
+		return "Para reparar codigo necesito un repo y una tarea verificable. Usa `aletheia solve --task task.json --verifier static_go_parse,go_test --trace`; desde chat no aplico patches ni ejecuto comandos.", true
+	}
+	return "", false
+}
+
+func isRepoRepairRequest(normalized string) bool {
+	return hasAny(normalized, "arregla este repo", "arreglar este repo", "fix this repo", "go test", "failing test", "tests fallan", "repo falla")
+}
+
+func isReactComponentRequest(normalized string) bool {
+	return hasAny(normalized, "componente de react", "component de react", "react component", "componente react") &&
+		hasAny(normalized, "haz", "hace", "crea", "crear", "genera", "generar", "build", "make")
+}
+
+func isCodeGenerationRequest(normalized string) bool {
+	return hasAny(normalized, "haz ", "hace ", "crea ", "crear ", "genera ", "generar ", "implementa ", "build ", "make ") &&
+		hasAny(normalized, "codigo", "code", "componente", "component", "funcion", "function", "react", "go", "typescript", "javascript")
+}
+
 func lastUserMessage(messages []chatMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -67,6 +92,14 @@ func normalizeBasicChat(text string) string {
 		"¡", "",
 		",", " ",
 		".", " ",
+		"(", " ",
+		")", " ",
+		"[", " ",
+		"]", " ",
+		"{", " ",
+		"}", " ",
+		":", " ",
+		";", " ",
 	)
 	return strings.Join(strings.Fields(replacer.Replace(text)), " ")
 }

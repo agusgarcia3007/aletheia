@@ -132,6 +132,9 @@ func Train(ctx context.Context, opts Options) (Report, error) {
 	if err := m.Save(opts.OutDir, tok.VocabSize(), steps, final.Loss); err != nil {
 		return Report{}, err
 	}
+	if err := copyDatasetArtifact(opts.DatasetPath, filepath.Join(opts.OutDir, "chat_examples.jsonl")); err != nil {
+		return Report{}, err
+	}
 	return Report{
 		InitialLoss:     initial.Loss,
 		FinalLoss:       final.Loss,
@@ -140,6 +143,17 @@ func Train(ctx context.Context, opts Options) (Report, error) {
 		Steps:           steps,
 		CheckpointPath:  opts.OutDir,
 	}, nil
+}
+
+func copyDatasetArtifact(src string, dst string) error {
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, raw, 0o644)
 }
 
 func nextBatch(samples []model.Sample, step int, batchSize int) []model.Sample {

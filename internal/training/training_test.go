@@ -99,6 +99,9 @@ inference:
 	if report.FinalLoss >= report.InitialLoss*0.8 {
 		t.Fatalf("loss did not drop enough: initial=%v final=%v", report.InitialLoss, report.FinalLoss)
 	}
+	if _, err := os.Stat(filepath.Join(outDir, "chat_examples.jsonl")); err != nil {
+		t.Fatalf("chat examples artifact missing: %v", err)
+	}
 	tok := tokenizer.New()
 	m, _, err := model.Load(outDir, tok.VocabSize())
 	if err != nil {
@@ -164,6 +167,9 @@ inference:
 	}
 	if report.FinalLoss >= report.InitialLoss*0.8 {
 		t.Fatalf("loss did not drop enough: initial=%v final=%v", report.InitialLoss, report.FinalLoss)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "chat_examples.jsonl")); err != nil {
+		t.Fatalf("chat examples artifact missing: %v", err)
 	}
 	tok := tokenizer.New()
 	m, manifest, err := model.Load(outDir, tok.VocabSize())

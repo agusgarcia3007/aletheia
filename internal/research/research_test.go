@@ -125,3 +125,71 @@ func TestExtractorClaimsAndWorkerStoreEvidence(t *testing.T) {
 		t.Fatalf("answer = %+v", answer)
 	}
 }
+
+func TestWorkerBuildsAnswerFromClaimNotTitle(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.CreateResearchJob(ctx, memory.ResearchJob{Query: "what is mcp in agents", MaxSources: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := FetchedPage{
+		URL:         "https://docs.example.com/mcp",
+		FinalURL:    "https://docs.example.com/mcp",
+		StatusCode:  http.StatusOK,
+		ContentType: "text/html",
+		FetchedAt:   time.Now().UTC(),
+		Body:        []byte(`<html><head><title>Model Context Protocol</title></head><body><h1>Model Context Protocol</h1><p>The Model Context Protocol lets agents connect to tools and data sources through a standard client-server interface.</p></body></html>`),
+	}
+	worker := NewWorker(store, Options{Enabled: true, MaxSources: 1, MinTrustScore: 0.1, JobTimeout: time.Second})
+	worker.Searcher = FakeSearchProvider{Results: []SearchResult{{Title: "Model Context Protocol", URL: page.URL, Snippet: "agents tools", Rank: 1}}}
+	worker.Fetcher = FakeFetcher{Pages: map[string]FetchedPage{page.URL: page}}
+	result, err := worker.RunJob(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Answer, "lets agents connect") || strings.Contains(result.Answer, "Model Context Protocol\n\nEvidence") {
+		t.Fatalf("answer = %q", result.Answer)
+	}
+}
+
+func TestWorkerFutureOutcomeIsInsufficientEvidence(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.CreateResearchJob(ctx, memory.ResearchJob{Query: "quien gano la copa mundial de futbol 2038?", MaxSources: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := FetchedPage{
+		URL:         "https://example.com/world-cup-2038",
+		FinalURL:    "https://example.com/world-cup-2038",
+		StatusCode:  http.StatusOK,
+		ContentType: "text/html",
+		FetchedAt:   time.Now().UTC(),
+		Body:        []byte(`<html><head><title>Copa Mundial 2038</title></head><body><p>La Copa Mundial 2038 todavia no tiene ganador confirmado.</p></body></html>`),
+	}
+	worker := NewWorker(store, Options{Enabled: true, MaxSources: 1, MinTrustScore: 0.1, JobTimeout: time.Second})
+	worker.Searcher = FakeSearchProvider{Results: []SearchResult{{Title: "Copa Mundial 2038", URL: page.URL, Snippet: "ganador", Rank: 1}}}
+	worker.Fetcher = FakeFetcher{Pages: map[string]FetchedPage{page.URL: page}}
+	result, err := worker.RunJob(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EvidenceStatus != StatusInsufficientEvidence || result.Confidence != 0 || !strings.Contains(result.Answer, "resultado futuro") {
+		t.Fatalf("result = %+v", result)
+	}
+}

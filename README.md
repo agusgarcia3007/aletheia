@@ -73,7 +73,7 @@ const response = await client.chat.completions.create({
 console.log(response.choices[0].message.content);
 ```
 
-`aletheia-mikros` is the first public checkpoint/profile: a small local model with stable basic conversation and Aletheia command help. The product target is a verified agent, not a general chatbot: local memory, SearXNG research, repair, and verifiers must beat guessing. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
+`aletheia-mikros` is the first public checkpoint/profile: a small local model with stable basic conversation and Aletheia command help. The chat dataset trains code snippets, repo repair handoff to `solve`, abstention, and answer-with-citations behavior. Deterministic chat replies are only a zero-step bootstrap fallback; trained checkpoints should answer through the model plus the router/research policy. The product target is a verified agent, not a general chatbot: local memory, SearXNG research, repair, and verifiers must beat guessing. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
 
 See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.
 

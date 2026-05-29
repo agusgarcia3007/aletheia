@@ -41,6 +41,8 @@ func domainTrust(rawURL string) float64 {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	switch {
+	case lowQualityHost(host):
+		return 0.05
 	case strings.HasSuffix(host, ".gov"), strings.HasSuffix(host, ".edu"):
 		return 0.90
 	case strings.Contains(host, "docs."), strings.Contains(host, "developer."), strings.Contains(host, "pkg.go.dev"):
@@ -52,4 +54,17 @@ func domainTrust(rawURL string) float64 {
 	default:
 		return 0.55
 	}
+}
+
+func lowQualityHost(host string) bool {
+	low := []string{
+		"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com",
+		"reddit.com", "turiver.com",
+	}
+	for _, domain := range low {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+	return false
 }
