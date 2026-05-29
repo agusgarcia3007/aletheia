@@ -101,6 +101,44 @@ type Skill struct {
 	CreatedAt      time.Time
 }
 
+type ResearchJob struct {
+	ID          string    `json:"id"`
+	Query       string    `json:"query"`
+	Status      string    `json:"status"`
+	Mode        string    `json:"mode"`
+	CreatedAt   time.Time `json:"created_at"`
+	StartedAt   time.Time `json:"started_at,omitempty"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	MaxSources  int       `json:"max_sources"`
+	Answer      string    `json:"answer,omitempty"`
+	Confidence  float64   `json:"confidence"`
+}
+
+type WebSource struct {
+	ID          string    `json:"id"`
+	JobID       string    `json:"job_id"`
+	URL         string    `json:"url"`
+	FinalURL    string    `json:"final_url"`
+	Title       string    `json:"title"`
+	Snippet     string    `json:"snippet"`
+	SourceRank  float64   `json:"source_rank"`
+	FetchedAt   time.Time `json:"fetched_at"`
+	Status      string    `json:"status"`
+	ContentHash string    `json:"content_hash"`
+	TrustScore  float64   `json:"trust_score"`
+	ByteSize    int64     `json:"byte_size"`
+	ContentType string    `json:"content_type"`
+}
+
+type WebClaim struct {
+	ID         string    `json:"id"`
+	SourceID   string    `json:"source_id"`
+	Claim      string    `json:"claim"`
+	Confidence float64   `json:"confidence"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type InspectStats struct {
 	Documents   int
 	Chunks      int
@@ -493,6 +531,203 @@ func (s *Store) UpdateSkillSuccessRate(ctx context.Context, skillID int64, succe
 	return err
 }
 
+func (s *Store) CreateResearchJob(ctx context.Context, job ResearchJob) (ResearchJob, error) {
+	if job.ID == "" {
+		job.ID = fmt.Sprintf("research_%d", time.Now().UTC().UnixNano())
+	}
+	if job.Query == "" {
+		return ResearchJob{}, fmt.Errorf("research query is required")
+	}
+	if job.Status == "" {
+		job.Status = "queued"
+	}
+	if job.Mode == "" {
+		job.Mode = "background"
+	}
+	if job.CreatedAt.IsZero() {
+		job.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO research_jobs(id, query, status, mode, created_at, started_at, completed_at, error, max_sources, answer, confidence)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, job.ID, job.Query, job.Status, job.Mode, formatTime(job.CreatedAt), nullableTime(job.StartedAt), nullableTime(job.CompletedAt), job.Error, job.MaxSources, job.Answer, job.Confidence)
+	if err != nil {
+		return ResearchJob{}, err
+	}
+	return job, nil
+}
+
+func (s *Store) ClaimQueuedResearchJob(ctx context.Context) (ResearchJob, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, query, status, mode, created_at, started_at, completed_at, error, max_sources, answer, confidence
+FROM research_jobs
+WHERE status = 'queued'
+ORDER BY created_at ASC
+LIMIT 1
+`)
+	job, err := scanResearchJob(row)
+	if err == sql.ErrNoRows {
+		return ResearchJob{}, false, nil
+	}
+	if err != nil {
+		return ResearchJob{}, false, err
+	}
+	now := time.Now().UTC()
+	_, err = s.db.ExecContext(ctx, `UPDATE research_jobs SET status = 'running', started_at = ? WHERE id = ? AND status = 'queued'`, formatTime(now), job.ID)
+	if err != nil {
+		return ResearchJob{}, false, err
+	}
+	job.Status = "running"
+	job.StartedAt = now
+	return job, true, nil
+}
+
+func (s *Store) UpdateResearchJob(ctx context.Context, job ResearchJob) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE research_jobs
+SET status = ?, started_at = ?, completed_at = ?, error = ?, answer = ?, confidence = ?
+WHERE id = ?
+`, job.Status, nullableTime(job.StartedAt), nullableTime(job.CompletedAt), job.Error, job.Answer, job.Confidence, job.ID)
+	return err
+}
+
+func (s *Store) ResearchJob(ctx context.Context, id string) (ResearchJob, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, query, status, mode, created_at, started_at, completed_at, error, max_sources, answer, confidence
+FROM research_jobs
+WHERE id = ?
+`, id)
+	job, err := scanResearchJob(row)
+	if err == sql.ErrNoRows {
+		return ResearchJob{}, false, nil
+	}
+	if err != nil {
+		return ResearchJob{}, false, err
+	}
+	return job, true, nil
+}
+
+func (s *Store) ListResearchJobs(ctx context.Context, limit int) ([]ResearchJob, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, query, status, mode, created_at, started_at, completed_at, error, max_sources, answer, confidence
+FROM research_jobs
+ORDER BY created_at DESC
+LIMIT ?
+`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ResearchJob
+	for rows.Next() {
+		job, err := scanResearchJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpsertWebSource(ctx context.Context, source WebSource) (WebSource, error) {
+	if source.ID == "" {
+		source.ID = fmt.Sprintf("source_%d", time.Now().UTC().UnixNano())
+	}
+	if source.JobID == "" || source.URL == "" {
+		return WebSource{}, fmt.Errorf("web source job_id and url are required")
+	}
+	if source.FetchedAt.IsZero() {
+		source.FetchedAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO web_sources(id, job_id, url, final_url, title, snippet, source_rank, fetched_at, status, content_hash, trust_score, byte_size, content_type)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+	final_url = excluded.final_url,
+	title = excluded.title,
+	snippet = excluded.snippet,
+	source_rank = excluded.source_rank,
+	fetched_at = excluded.fetched_at,
+	status = excluded.status,
+	content_hash = excluded.content_hash,
+	trust_score = excluded.trust_score,
+	byte_size = excluded.byte_size,
+	content_type = excluded.content_type
+`, source.ID, source.JobID, source.URL, source.FinalURL, source.Title, source.Snippet, source.SourceRank, formatTime(source.FetchedAt), source.Status, source.ContentHash, source.TrustScore, source.ByteSize, source.ContentType)
+	if err != nil {
+		return WebSource{}, err
+	}
+	return source, nil
+}
+
+func (s *Store) RecordWebClaim(ctx context.Context, claim WebClaim) (WebClaim, error) {
+	if claim.ID == "" {
+		claim.ID = fmt.Sprintf("claim_%d", time.Now().UTC().UnixNano())
+	}
+	if claim.SourceID == "" || claim.Claim == "" {
+		return WebClaim{}, fmt.Errorf("web claim source_id and claim are required")
+	}
+	if claim.CreatedAt.IsZero() {
+		claim.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO web_claims(id, source_id, claim, confidence, created_at)
+VALUES (?, ?, ?, ?, ?)
+`, claim.ID, claim.SourceID, claim.Claim, claim.Confidence, formatTime(claim.CreatedAt))
+	if err != nil {
+		return WebClaim{}, err
+	}
+	return claim, nil
+}
+
+func (s *Store) WebSourcesByJob(ctx context.Context, jobID string) ([]WebSource, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, job_id, url, final_url, title, snippet, source_rank, fetched_at, status, content_hash, trust_score, byte_size, content_type
+FROM web_sources
+WHERE job_id = ?
+ORDER BY source_rank DESC, id ASC
+`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WebSource
+	for rows.Next() {
+		source, err := scanWebSource(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, source)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) WebClaimsByJob(ctx context.Context, jobID string) ([]WebClaim, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT c.id, c.source_id, c.claim, c.confidence, c.created_at
+FROM web_claims c
+JOIN web_sources s ON s.id = c.source_id
+WHERE s.job_id = ?
+ORDER BY c.confidence DESC, c.id ASC
+`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WebClaim
+	for rows.Next() {
+		claim, err := scanWebClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, claim)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Chunks(ctx context.Context) ([]Chunk, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT c.id, c.document_id, d.path, c.offset_start, c.offset_end, c.text, COALESCE(c.embedding_id, ''), d.updated_at
@@ -679,6 +914,44 @@ func scanSkill(row skillScanner) (Skill, error) {
 	return skill, nil
 }
 
+func scanResearchJob(row skillScanner) (ResearchJob, error) {
+	var job ResearchJob
+	var createdAt string
+	var startedAt sql.NullString
+	var completedAt sql.NullString
+	if err := row.Scan(&job.ID, &job.Query, &job.Status, &job.Mode, &createdAt, &startedAt, &completedAt, &job.Error, &job.MaxSources, &job.Answer, &job.Confidence); err != nil {
+		return ResearchJob{}, err
+	}
+	job.CreatedAt = parseTime(createdAt)
+	if startedAt.Valid {
+		job.StartedAt = parseTime(startedAt.String)
+	}
+	if completedAt.Valid {
+		job.CompletedAt = parseTime(completedAt.String)
+	}
+	return job, nil
+}
+
+func scanWebSource(row skillScanner) (WebSource, error) {
+	var source WebSource
+	var fetchedAt string
+	if err := row.Scan(&source.ID, &source.JobID, &source.URL, &source.FinalURL, &source.Title, &source.Snippet, &source.SourceRank, &fetchedAt, &source.Status, &source.ContentHash, &source.TrustScore, &source.ByteSize, &source.ContentType); err != nil {
+		return WebSource{}, err
+	}
+	source.FetchedAt = parseTime(fetchedAt)
+	return source, nil
+}
+
+func scanWebClaim(row skillScanner) (WebClaim, error) {
+	var claim WebClaim
+	var createdAt string
+	if err := row.Scan(&claim.ID, &claim.SourceID, &claim.Claim, &claim.Confidence, &createdAt); err != nil {
+		return WebClaim{}, err
+	}
+	claim.CreatedAt = parseTime(createdAt)
+	return claim, nil
+}
+
 func parseTimes(doc *Document, createdAt string, updatedAt string) {
 	if ts, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 		doc.CreatedAt = ts
@@ -686,6 +959,25 @@ func parseTimes(doc *Document, createdAt string, updatedAt string) {
 	if ts, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
 		doc.UpdatedAt = ts
 	}
+}
+
+func parseTime(value string) time.Time {
+	ts, _ := time.Parse(time.RFC3339Nano, value)
+	return ts
+}
+
+func formatTime(ts time.Time) string {
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	return ts.UTC().Format(time.RFC3339Nano)
+}
+
+func nullableTime(ts time.Time) any {
+	if ts.IsZero() {
+		return nil
+	}
+	return formatTime(ts)
 }
 
 const schema = `
@@ -750,5 +1042,43 @@ CREATE TABLE IF NOT EXISTS edges (
 	to_node INTEGER NOT NULL REFERENCES nodes(id),
 	relation TEXT NOT NULL,
 	weight REAL NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS research_jobs (
+	id TEXT PRIMARY KEY,
+	query TEXT NOT NULL,
+	status TEXT NOT NULL,
+	mode TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	started_at TEXT,
+	completed_at TEXT,
+	error TEXT NOT NULL DEFAULT '',
+	max_sources INTEGER NOT NULL DEFAULT 0,
+	answer TEXT NOT NULL DEFAULT '',
+	confidence REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS web_sources (
+	id TEXT PRIMARY KEY,
+	job_id TEXT NOT NULL REFERENCES research_jobs(id),
+	url TEXT NOT NULL,
+	final_url TEXT NOT NULL DEFAULT '',
+	title TEXT NOT NULL DEFAULT '',
+	snippet TEXT NOT NULL DEFAULT '',
+	source_rank REAL NOT NULL DEFAULT 0,
+	fetched_at TEXT NOT NULL,
+	status TEXT NOT NULL,
+	content_hash TEXT NOT NULL DEFAULT '',
+	trust_score REAL NOT NULL DEFAULT 0,
+	byte_size INTEGER NOT NULL DEFAULT 0,
+	content_type TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS web_claims (
+	id TEXT PRIMARY KEY,
+	source_id TEXT NOT NULL REFERENCES web_sources(id),
+	claim TEXT NOT NULL,
+	confidence REAL NOT NULL,
+	created_at TEXT NOT NULL
 );
 `

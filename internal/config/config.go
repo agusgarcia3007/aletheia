@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"aletheia/internal/verifier"
@@ -18,6 +20,7 @@ type Config struct {
 	Search    SearchConfig    `yaml:"search"`
 	Verifiers VerifiersConfig `yaml:"verifiers"`
 	Memory    MemoryConfig    `yaml:"memory"`
+	Research  ResearchConfig  `yaml:"research"`
 }
 
 type ProjectConfig struct {
@@ -88,6 +91,24 @@ type MemoryConfig struct {
 	MaxFileBytes int64  `yaml:"max_file_bytes"`
 	Embedding    string `yaml:"embedding"`
 	GraphEnabled *bool  `yaml:"graph_enabled"`
+}
+
+type ResearchConfig struct {
+	Enabled               bool     `yaml:"enabled"`
+	AutoOnKnowledgeGap    bool     `yaml:"auto_on_knowledge_gap"`
+	BackgroundJobsEnabled bool     `yaml:"background_jobs_enabled"`
+	Provider              string   `yaml:"provider"`
+	SearXNGURL            string   `yaml:"searxng_url"`
+	MaxSources            int      `yaml:"max_sources"`
+	MaxFetchBytes         int64    `yaml:"max_fetch_bytes"`
+	FetchTimeoutSeconds   int      `yaml:"fetch_timeout_seconds"`
+	JobTimeoutSeconds     int      `yaml:"job_timeout_seconds"`
+	MinSourcesForVerified int      `yaml:"min_sources_for_verified"`
+	MinTrustScore         float64  `yaml:"min_trust_score"`
+	StoreRawHTML          bool     `yaml:"store_raw_html"`
+	UserAgent             string   `yaml:"user_agent"`
+	BlockedDomains        []string `yaml:"blocked_domains"`
+	AllowedDomains        []string `yaml:"allowed_domains"`
 }
 
 func Load(path string) (Config, error) {
@@ -197,6 +218,7 @@ func (c *Config) ApplyDefaults() {
 	if c.Memory.GraphEnabled == nil {
 		c.Memory.GraphEnabled = boolPtr(true)
 	}
+	c.Research.applyDefaults()
 }
 
 func (c Config) Validate() error {
@@ -266,10 +288,110 @@ func (c Config) Validate() error {
 	if c.Memory.Embedding != "hashing" {
 		return fmt.Errorf("memory.embedding must be hashing")
 	}
+	if err := c.Research.validate(); err != nil {
+		return err
+	}
 	if err := c.Verifiers.validate(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (r *ResearchConfig) applyDefaults() {
+	if !r.BackgroundJobsEnabled {
+		r.BackgroundJobsEnabled = true
+	}
+	if r.Provider == "" {
+		r.Provider = "searxng"
+	}
+	if r.SearXNGURL == "" {
+		r.SearXNGURL = "http://searxng:8080"
+	}
+	if r.MaxSources == 0 {
+		r.MaxSources = 5
+	}
+	if r.MaxFetchBytes == 0 {
+		r.MaxFetchBytes = 1 << 20
+	}
+	if r.FetchTimeoutSeconds == 0 {
+		r.FetchTimeoutSeconds = 10
+	}
+	if r.JobTimeoutSeconds == 0 {
+		r.JobTimeoutSeconds = 120
+	}
+	if r.MinSourcesForVerified == 0 {
+		r.MinSourcesForVerified = 2
+	}
+	if r.MinTrustScore == 0 {
+		r.MinTrustScore = 0.35
+	}
+	if r.UserAgent == "" {
+		r.UserAgent = "AletheiaResearchBot/0.1"
+	}
+	if len(r.BlockedDomains) == 0 {
+		r.BlockedDomains = []string{"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com"}
+	}
+}
+
+func (r ResearchConfig) validate() error {
+	if r.Provider != "searxng" {
+		return fmt.Errorf("research.provider must be searxng")
+	}
+	if strings.TrimSpace(r.SearXNGURL) == "" {
+		return fmt.Errorf("research.searxng_url is required")
+	}
+	if r.MaxSources <= 0 {
+		return fmt.Errorf("research.max_sources must be positive")
+	}
+	if r.MaxFetchBytes <= 0 {
+		return fmt.Errorf("research.max_fetch_bytes must be positive")
+	}
+	if r.FetchTimeoutSeconds <= 0 {
+		return fmt.Errorf("research.fetch_timeout_seconds must be positive")
+	}
+	if r.JobTimeoutSeconds <= 0 {
+		return fmt.Errorf("research.job_timeout_seconds must be positive")
+	}
+	if r.MinSourcesForVerified <= 0 {
+		return fmt.Errorf("research.min_sources_for_verified must be positive")
+	}
+	if r.MinTrustScore < 0 || r.MinTrustScore > 1 {
+		return fmt.Errorf("research.min_trust_score must be between 0 and 1")
+	}
+	for _, domain := range append(append([]string{}, r.BlockedDomains...), r.AllowedDomains...) {
+		if strings.TrimSpace(domain) == "" || strings.ContainsAny(domain, "/: ") {
+			return fmt.Errorf("research domains must be bare hostnames")
+		}
+	}
+	return nil
+}
+
+func (c Config) ResearchWithEnv() ResearchConfig {
+	r := c.Research
+	if value, ok := envBool("ALETHEIA_RESEARCH_ENABLED"); ok {
+		r.Enabled = value
+	}
+	if value, ok := envBool("ALETHEIA_RESEARCH_AUTO"); ok {
+		r.AutoOnKnowledgeGap = value
+	}
+	if value := strings.TrimSpace(os.Getenv("ALETHEIA_SEARXNG_URL")); value != "" {
+		r.SearXNGURL = value
+	}
+	if value := strings.TrimSpace(os.Getenv("ALETHEIA_RESEARCH_MAX_SOURCES")); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			r.MaxSources = n
+		}
+	}
+	r.applyDefaults()
+	return r
+}
+
+func envBool(name string) (bool, bool) {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	if value == "" {
+		return false, false
+	}
+	return value == "1" || value == "true" || value == "yes" || value == "on", true
 }
 
 func (c Config) EnabledVerifierNames() []string {

@@ -38,7 +38,7 @@ func basicMikrosChatReply(modelName string, messages []chatMessage) (string, boo
 	case strings.TrimSpace(normalized) == "":
 		return "Hola. Soy Aletheia Mikros. Puedo ayudarte con comandos basicos y pruebas locales.", true
 	default:
-		return "No tengo evidencia suficiente para responder con precision. Puedo ayudar con saludos, limites y comandos de Aletheia como ask, solve, eval y serve.", true
+		return "", false
 	}
 }
 

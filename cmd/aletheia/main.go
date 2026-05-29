@@ -19,6 +19,7 @@ import (
 	"aletheia/internal/learning"
 	"aletheia/internal/memory"
 	"aletheia/internal/model"
+	"aletheia/internal/research"
 	"aletheia/internal/retriever"
 	"aletheia/internal/runner"
 	"aletheia/internal/selector"
@@ -66,6 +67,12 @@ func run(args []string) error {
 		return runEval(args[2:])
 	case "learn":
 		return runLearn(args[2:])
+	case "research":
+		return runResearch(args[2:])
+	case "research-status":
+		return runResearchStatus(args[2:])
+	case "jobs":
+		return runJobs(args[2:])
 	case "serve":
 		return runServe(args[2:])
 	case "-h", "--help", "help":
@@ -93,8 +100,11 @@ Usage:
   aletheia solve --task examples/buggy-go/task.json [--config configs/micro.yaml] [--db %s] [--checkpoint checkpoint-dir] [--selector-checkpoint checkpoints/selector-bootstrap] [--use-skills] [--search greedy|beam|mcts] [--beam-width 4] [--max-depth 8] [--verifier go_test,static_go_parse] [--trace]
   aletheia eval --suite evals/bootstrap [--json]
   aletheia learn --db %s --suite evals/bootstrap --out datasets/generated [--train-selector-out checkpoints/selector-generated]
+  aletheia research --query "what is MCP in agents?" [--db %s] [--background]
+  aletheia research-status --job research_id [--db %s]
+  aletheia jobs [--db %s]
   aletheia serve [--addr :8080] [--checkpoint checkpoints/aletheia-mikros] [--model aletheia-mikros] [--api-key $ALETHEIA_API_KEY]
-`, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
+`, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath, memory.DefaultDBPath)
 }
 
 func runConfig(args []string) error {
@@ -128,6 +138,8 @@ func runConfigInspect(args []string) error {
 	fmt.Printf("search: strategy=%s beam_width=%d max_depth=%d budget_seconds=%d budget_tool_calls=%d\n", cfg.Search.Strategy, cfg.Search.BeamWidth, cfg.Search.MaxDepth, cfg.Search.BudgetSeconds, cfg.Search.BudgetToolCalls)
 	fmt.Printf("verifiers: %s timeout=%s\n", strings.Join(cfg.EnabledVerifierNames(), ","), cfg.EffectiveVerifierTimeout())
 	fmt.Printf("memory: chunk_size=%d chunk_overlap=%d max_file_bytes=%d embedding=%s graph_enabled=%v\n", cfg.Memory.ChunkSize, cfg.Memory.ChunkOverlap, cfg.Memory.MaxFileBytes, cfg.Memory.Embedding, cfg.Memory.GraphEnabledBool())
+	researchCfg := cfg.ResearchWithEnv()
+	fmt.Printf("research: enabled=%v auto=%v background=%v provider=%s searxng_url=%s max_sources=%d\n", researchCfg.Enabled, researchCfg.AutoOnKnowledgeGap, researchCfg.BackgroundJobsEnabled, researchCfg.Provider, researchCfg.SearXNGURL, researchCfg.MaxSources)
 	return nil
 }
 
@@ -822,6 +834,8 @@ func runEval(args []string) error {
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
+	configPath := fs.String("config", "", "configuration YAML path")
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
 	addr := fs.String("addr", envDefault("ALETHEIA_ADDR", apiserver.DefaultAddr), "HTTP listen address")
 	checkpoint := fs.String("checkpoint", envDefault("ALETHEIA_CHECKPOINT", apiserver.DefaultCheckpoint), "model checkpoint directory")
 	modelName := fs.String("model", os.Getenv("ALETHEIA_MODEL"), "served OpenAI-compatible model name")
@@ -831,6 +845,21 @@ func runServe(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
 	server, err := apiserver.New(apiserver.Options{
 		Addr:         *addr,
 		Checkpoint:   *checkpoint,
@@ -838,12 +867,191 @@ func runServe(args []string) error {
 		APIKey:       *apiKey,
 		Auth:         *auth,
 		MaxBodyBytes: *maxBodyBytes,
+		Store:        store,
+		Research:     researchOptionsFromConfig(cfg),
 	})
 	if err != nil {
 		return err
 	}
 	fmt.Printf("serving model %s on %s\n", server.ModelName(), server.Addr())
 	return server.ListenAndServe(context.Background())
+}
+
+func runResearch(args []string) error {
+	fs := flag.NewFlagSet("research", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	query := fs.String("query", "", "research query")
+	background := fs.Bool("background", false, "queue research instead of running synchronously")
+	maxSources := fs.Int("max-sources", 0, "maximum sources to fetch")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*query) == "" {
+		return fmt.Errorf("--query is required")
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	opts := researchOptionsFromConfig(cfg)
+	opts.Enabled = true
+	if *maxSources > 0 {
+		opts.MaxSources = *maxSources
+	}
+	mode := "sync"
+	if *background {
+		mode = "background"
+	}
+	job, err := store.CreateResearchJob(context.Background(), memory.ResearchJob{
+		Query:      *query,
+		Status:     "queued",
+		Mode:       mode,
+		MaxSources: opts.MaxSources,
+	})
+	if err != nil {
+		return err
+	}
+	if *background {
+		fmt.Printf("status: queued\njob_id: %s\n", job.ID)
+		return nil
+	}
+	worker := research.NewWorker(store, opts)
+	result, err := worker.RunJob(context.Background(), job)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("status: completed\n")
+	fmt.Printf("job_id: %s\n", job.ID)
+	fmt.Printf("sources_found: %d\n", len(result.Sources))
+	fmt.Printf("sources_stored: %d\n", result.SourcesStored)
+	fmt.Printf("chunks_stored: %d\n", result.ChunksStored)
+	fmt.Printf("claims_stored: %d\n", result.ClaimsStored)
+	fmt.Printf("confidence: %.4f\n", result.Confidence)
+	fmt.Printf("answer:\n%s\n", result.Answer)
+	return nil
+}
+
+func runResearchStatus(args []string) error {
+	fs := flag.NewFlagSet("research-status", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	jobID := fs.String("job", "", "research job id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *jobID == "" {
+		return fmt.Errorf("--job is required")
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	job, ok, err := store.ResearchJob(context.Background(), *jobID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("research job %s not found", *jobID)
+	}
+	sources, _ := store.WebSourcesByJob(context.Background(), job.ID)
+	claims, _ := store.WebClaimsByJob(context.Background(), job.ID)
+	fmt.Printf("status: %s\n", job.Status)
+	fmt.Printf("job_id: %s\n", job.ID)
+	fmt.Printf("query: %s\n", job.Query)
+	fmt.Printf("sources_stored: %d\n", len(sources))
+	fmt.Printf("claims_stored: %d\n", len(claims))
+	fmt.Printf("confidence: %.4f\n", job.Confidence)
+	if job.Error != "" {
+		fmt.Printf("error: %s\n", job.Error)
+	}
+	if job.Answer != "" {
+		fmt.Printf("answer:\n%s\n", job.Answer)
+	}
+	return nil
+}
+
+func runJobs(args []string) error {
+	fs := flag.NewFlagSet("jobs", flag.ContinueOnError)
+	configPath := fs.String("config", "", "configuration YAML path")
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	limit := fs.Int("limit", 20, "maximum jobs to list")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil && !flagWasSet(fs, "db") {
+		*dbPath = cfg.Project.MemoryDB
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	jobs, err := store.ListResearchJobs(context.Background(), *limit)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("jobs: %d\n", len(jobs))
+	for _, job := range jobs {
+		fmt.Printf("  %s status=%s mode=%s confidence=%.4f query=%q\n", job.ID, job.Status, job.Mode, job.Confidence, job.Query)
+	}
+	return nil
+}
+
+func researchOptionsFromConfig(cfg *config.Config) research.Options {
+	var base config.Config
+	if cfg != nil {
+		base = *cfg
+	} else {
+		base.ApplyDefaults()
+	}
+	researchCfg := base.ResearchWithEnv()
+	return research.Options{
+		Enabled:               researchCfg.Enabled,
+		AutoOnKnowledgeGap:    researchCfg.AutoOnKnowledgeGap,
+		BackgroundJobsEnabled: researchCfg.BackgroundJobsEnabled,
+		Provider:              researchCfg.Provider,
+		SearXNGURL:            researchCfg.SearXNGURL,
+		MaxSources:            researchCfg.MaxSources,
+		MaxFetchBytes:         researchCfg.MaxFetchBytes,
+		FetchTimeout:          time.Duration(researchCfg.FetchTimeoutSeconds) * time.Second,
+		JobTimeout:            time.Duration(researchCfg.JobTimeoutSeconds) * time.Second,
+		MinSourcesForVerified: researchCfg.MinSourcesForVerified,
+		MinTrustScore:         researchCfg.MinTrustScore,
+		StoreRawHTML:          researchCfg.StoreRawHTML,
+		UserAgent:             researchCfg.UserAgent,
+		BlockedDomains:        researchCfg.BlockedDomains,
+		AllowedDomains:        researchCfg.AllowedDomains,
+	}
 }
 
 func runLearn(args []string) error {

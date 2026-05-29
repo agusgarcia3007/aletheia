@@ -164,3 +164,12 @@
 - Keep `solve` verifier-first and separate from the public chat API; it does not require a served planner checkpoint by default.
 - Make Docker/Dokploy build and serve one checkpoint only: `aletheia-mikros`.
 - Use a zero-step bootstrap checkpoint in Docker builds so deploys do not retrain on every build; real training remains a local/manual command.
+
+## Milestone Research-2
+
+- Add opt-in SearXNG-backed research for knowledge gaps while keeping local memory first.
+- Persist research jobs, web sources, claims, documents, chunks, and graph evidence with additive SQLite tables only.
+- Keep chat research background by default; synchronous research is explicit only.
+- Block social domains by default and enforce timeout, max bytes, redirect, content-type, and user-agent policy in the HTTP fetcher.
+- Treat single-source web evidence as unverified support, not verified truth.
+- Keep research free of paid APIs, remote LLM APIs, shell execution, and repository mutation.

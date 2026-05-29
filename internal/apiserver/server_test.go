@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"aletheia/internal/memory"
 	"aletheia/internal/model"
+	"aletheia/internal/research"
 	"aletheia/internal/tokenizer"
 )
 
@@ -137,9 +140,101 @@ func TestMikrosCheckpointDoesNotEmitActionTokensForGreeting(t *testing.T) {
 	}
 }
 
+func TestChatSmalltalkDoesNotCreateResearchJob(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServer(t, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"hola"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestChatKnowledgeGapQueuesResearchJob(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServer(t, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"what is MCP in agents?"}]}`, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "job_id=") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].Status != "queued" {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestResearchEndpointQueuesJob(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServer(t, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:    true,
+			MaxSources: 3,
+		},
+	})
+	rec := serveJSON(t, server, "/v1/aletheia/research", `{"query":"what is mcp","mode":"background","max_sources":2}`, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"queued"`) {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	status := httptest.NewRecorder()
+	jobs, err := store.ListResearchJobs(contextBackground(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/aletheia/research/"+jobs[0].ID, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	server.Handler().ServeHTTP(status, req)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), jobs[0].ID) {
+		t.Fatalf("status = %d body=%s", status.Code, status.Body.String())
+	}
+}
+
 func newTestServer(t *testing.T, opts Options) *Server {
 	t.Helper()
 	return newNamedTestServer(t, "aletheia-mikros", opts)
+}
+
+func newTestStore(t *testing.T) *memory.Store {
+	t.Helper()
+	store, err := memory.Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Migrate(contextBackground()); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func contextBackground() context.Context {
+	return context.Background()
 }
 
 func newNamedTestServer(t *testing.T, modelName string, opts Options) *Server {

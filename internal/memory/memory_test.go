@@ -308,6 +308,71 @@ func TestSkillsUpsertLookupListAndInspect(t *testing.T) {
 	}
 }
 
+func TestResearchJobSourceClaimLifecycle(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "memory.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.CreateResearchJob(ctx, ResearchJob{Query: "what is mcp", MaxSources: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := store.ClaimQueuedResearchJob(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || claimed.ID != job.ID || claimed.Status != "running" {
+		t.Fatalf("claimed = %+v ok=%v", claimed, ok)
+	}
+	source, err := store.UpsertWebSource(ctx, WebSource{
+		ID:          "source-1",
+		JobID:       job.ID,
+		URL:         "https://example.com/mcp",
+		FinalURL:    "https://example.com/mcp",
+		Title:       "MCP",
+		Status:      "stored",
+		ContentHash: "hash",
+		TrustScore:  0.7,
+		ByteSize:    128,
+		ContentType: "text/html",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordWebClaim(ctx, WebClaim{ID: "claim-1", SourceID: source.ID, Claim: "MCP is a protocol.", Confidence: 0.8}); err != nil {
+		t.Fatal(err)
+	}
+	claimed.Status = "completed"
+	claimed.Answer = "MCP is a protocol."
+	claimed.Confidence = 0.8
+	if err := store.UpdateResearchJob(ctx, claimed); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := store.ResearchJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.Status != "completed" || got.Answer == "" {
+		t.Fatalf("job = %+v ok=%v", got, ok)
+	}
+	sources, err := store.WebSourcesByJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := store.WebClaimsByJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 || len(claims) != 1 {
+		t.Fatalf("sources=%+v claims=%+v", sources, claims)
+	}
+}
+
 func itoa64(v int64) string {
 	return strconv.FormatInt(v, 10)
 }

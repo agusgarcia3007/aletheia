@@ -63,3 +63,25 @@ memory:
   max_file_bytes: 524288
   embedding: hashing
   graph_enabled: true
+
+research:
+  enabled: false
+  auto_on_knowledge_gap: false
+  background_jobs_enabled: true
+  provider: searxng
+  searxng_url: "http://searxng:8080"
+  max_sources: 5
+  max_fetch_bytes: 1048576
+  fetch_timeout_seconds: 10
+  job_timeout_seconds: 120
+  min_sources_for_verified: 2
+  min_trust_score: 0.35
+  store_raw_html: false
+  user_agent: "AletheiaResearchBot/0.1"
+  blocked_domains:
+    - "facebook.com"
+    - "instagram.com"
+    - "tiktok.com"
+    - "x.com"
+    - "twitter.com"
+  allowed_domains: []

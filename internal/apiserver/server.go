@@ -10,7 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"aletheia/internal/memory"
 	"aletheia/internal/model"
+	"aletheia/internal/research"
+	"aletheia/internal/retriever"
 	"aletheia/internal/runner"
 	"aletheia/internal/tokenizer"
 )
@@ -28,6 +31,8 @@ type Options struct {
 	APIKey       string
 	Auth         string
 	MaxBodyBytes int64
+	Store        *memory.Store
+	Research     research.Options
 }
 
 type Server struct {
@@ -35,6 +40,8 @@ type Server struct {
 	manifest  model.Manifest
 	tokenizer *tokenizer.Tokenizer
 	runner    runner.Runner
+	store     *memory.Store
+	research  research.Options
 	created   int64
 	nextID    atomic.Uint64
 }
@@ -60,11 +67,17 @@ func New(opts Options) (*Server, error) {
 		manifest:  manifest,
 		tokenizer: tok,
 		runner:    runner.New(m, tok),
+		store:     opts.Store,
+		research:  opts.Research,
 		created:   time.Now().Unix(),
 	}, nil
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	if s.store != nil && s.research.Enabled && s.research.BackgroundJobsEnabled {
+		worker := research.NewWorker(s.store, s.research)
+		worker.Start(ctx, 2*time.Second)
+	}
 	server := &http.Server{
 		Addr:    s.opts.Addr,
 		Handler: s.Handler(),
@@ -93,6 +106,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/models", s.withAuth(s.handleModels))
 	mux.HandleFunc("POST /v1/chat/completions", s.withAuth(s.handleChatCompletions))
 	mux.HandleFunc("POST /v1/completions", s.withAuth(s.handleCompletions))
+	mux.HandleFunc("POST /v1/aletheia/research", s.withAuth(s.handleResearch))
+	mux.HandleFunc("GET /v1/aletheia/research/", s.withAuth(s.handleResearchStatus))
+	mux.HandleFunc("GET /v1/aletheia/jobs", s.withAuth(s.handleJobs))
 	return mux
 }
 
@@ -180,6 +196,31 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	query := strings.TrimSpace(lastUserMessage(req.Messages))
+	if query != "" && s.store != nil {
+		answer, err := (retriever.Retriever{Store: s.store}).Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
+		if err == nil && answer.Verified {
+			writeJSON(w, http.StatusOK, s.chatResponse(answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
+			return
+		}
+		researchMode := "background"
+		if req.Aletheia != nil && strings.TrimSpace(req.Aletheia.Research) != "" {
+			researchMode = strings.TrimSpace(req.Aletheia.Research)
+		}
+		if shouldResearch(query, researchMode, s.research) {
+			job, err := s.enqueueResearch(r.Context(), query, researchMode, 0)
+			if err == nil {
+				content := fmt.Sprintf("No tengo evidencia local suficiente. Inicié una investigación en background con job_id=%s. Consultá el resultado en unos segundos o repetí la pregunta luego.", job.ID)
+				writeJSON(w, http.StatusOK, s.chatResponse(content, s.textUsage(prompt, content)))
+				return
+			}
+		}
+		if researchMode == "off" || !s.research.Enabled {
+			content := "No tengo evidencia local suficiente para responder. La investigación web está deshabilitada."
+			writeJSON(w, http.StatusOK, s.chatResponse(content, s.textUsage(prompt, content)))
+			return
+		}
+	}
 	generated, usage, err := s.generate(prompt, generationOptions{
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
@@ -206,6 +247,129 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		"usage": usage,
+	})
+}
+
+func (s *Server) chatResponse(content string, usage map[string]int) map[string]any {
+	return map[string]any{
+		"id":      s.id("chatcmpl"),
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   s.opts.ModelName,
+		"choices": []map[string]any{
+			{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": content,
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": usage,
+	}
+}
+
+func (s *Server) handleResearch(w http.ResponseWriter, r *http.Request) {
+	var req researchRequest
+	if !s.decodeRequest(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "query", "missing_query", "query is required")
+		return
+	}
+	mode := req.Mode
+	if mode == "" {
+		mode = "background"
+	}
+	job, err := s.enqueueResearch(r.Context(), req.Query, mode, req.MaxSources)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "research", "research_unavailable", err.Error())
+		return
+	}
+	if mode == "sync" {
+		worker := research.NewWorker(s.store, s.research)
+		result, err := worker.RunJob(r.Context(), job)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "server_error", "research", "research_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, researchResultJSON(job.ID, result))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "queued",
+		"job_id":  job.ID,
+		"message": "No tengo evidencia local suficiente. Inicié una investigación en background.",
+	})
+}
+
+func (s *Server) handleResearchStatus(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/v1/aletheia/research/")
+	if id == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "job", "missing_job", "job id is required")
+		return
+	}
+	if s.store == nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "research", "research_unavailable", "research store is not configured")
+		return
+	}
+	job, ok, err := s.store.ResearchJob(r.Context(), id)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "server_error", "research", "research_failed", err.Error())
+		return
+	}
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "invalid_request_error", "job", "job_not_found", "research job not found")
+		return
+	}
+	sources, _ := s.store.WebSourcesByJob(r.Context(), id)
+	claims, _ := s.store.WebClaimsByJob(r.Context(), id)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":         job.Status,
+		"job_id":         job.ID,
+		"query":          job.Query,
+		"sources_stored": len(sources),
+		"claims_stored":  len(claims),
+		"confidence":     job.Confidence,
+		"answer":         job.Answer,
+		"error":          job.Error,
+		"sources":        sources,
+	})
+}
+
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "research", "research_unavailable", "research store is not configured")
+		return
+	}
+	jobs, err := s.store.ListResearchJobs(r.Context(), 20)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "server_error", "research", "research_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
+}
+
+func (s *Server) enqueueResearch(ctx context.Context, query string, mode string, maxSources int) (memory.ResearchJob, error) {
+	if s.store == nil {
+		return memory.ResearchJob{}, fmt.Errorf("research store is not configured")
+	}
+	if !s.research.Enabled {
+		return memory.ResearchJob{}, fmt.Errorf("research is disabled")
+	}
+	if mode != "sync" && mode != "background" {
+		mode = "background"
+	}
+	if maxSources <= 0 {
+		maxSources = s.research.MaxSources
+	}
+	return s.store.CreateResearchJob(ctx, memory.ResearchJob{
+		Query:      query,
+		Status:     "queued",
+		Mode:       mode,
+		MaxSources: maxSources,
 	})
 }
 
@@ -334,6 +498,52 @@ func (s *Server) textUsage(prompt string, completion string) map[string]int {
 		"prompt_tokens":     len(promptTokens),
 		"completion_tokens": len(completionTokens),
 		"total_tokens":      len(promptTokens) + len(completionTokens),
+	}
+}
+
+func shouldResearch(query string, mode string, opts research.Options) bool {
+	if mode == "off" || !opts.Enabled {
+		return false
+	}
+	if mode == "sync" || mode == "background" {
+		return !isCodingTask(query)
+	}
+	return opts.AutoOnKnowledgeGap && !isCodingTask(query)
+}
+
+func isCodingTask(query string) bool {
+	normalized := normalizeBasicChat(query)
+	return strings.Contains(normalized, "fix ") ||
+		strings.Contains(normalized, "arregla") ||
+		strings.Contains(normalized, "repo") ||
+		strings.Contains(normalized, "go test") ||
+		strings.Contains(normalized, "patch") ||
+		strings.Contains(normalized, "codigo") ||
+		strings.Contains(normalized, "code")
+}
+
+func formatCitations(citations []retriever.Citation) string {
+	if len(citations) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Fuentes:\n")
+	for _, citation := range citations {
+		b.WriteString(fmt.Sprintf("- %s chunk=%d score=%.4f\n", citation.Path, citation.ChunkID, citation.Score))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func researchResultJSON(jobID string, result research.ResearchResult) map[string]any {
+	return map[string]any{
+		"status":         "completed",
+		"job_id":         jobID,
+		"sources_found":  len(result.Sources),
+		"sources_stored": result.SourcesStored,
+		"chunks_stored":  result.ChunksStored,
+		"claims_stored":  result.ClaimsStored,
+		"confidence":     result.Confidence,
+		"answer":         result.Answer,
 	}
 }
 

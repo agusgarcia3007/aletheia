@@ -29,6 +29,7 @@ Opt-in features:
 - `solve --fuzz` and `solve --bench` for costly Go verifiers.
 - `learn --db ... --out ...` for manual local dataset export.
 - `serve` for an OpenAI-compatible inference API around a local checkpoint.
+- `research --query ...` for opt-in SearXNG-backed evidence collection.
 
 OpenAI-compatible local API:
 
@@ -74,3 +75,5 @@ console.log(response.choices[0].message.content);
 `aletheia-mikros` is the first public checkpoint/profile: a small local model with stable basic conversation and Aletheia command help. `solve` keeps its verifier-first flow and does not require serving a separate planner checkpoint.
 
 See [docs/testing.md](docs/testing.md) for the smoke suite, [docs/deploy.md](docs/deploy.md) for Dokploy deploy, and [docs/architecture.md](docs/architecture.md) for subsystem contracts.
+
+For SearXNG-backed research setup, see [docs/research.md](docs/research.md) and [docs/deploy-dokploy-searxng.md](docs/deploy-dokploy-searxng.md).

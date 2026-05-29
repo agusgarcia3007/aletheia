@@ -153,6 +153,47 @@ verifiers:
 	}
 }
 
+func TestResearchConfigDefaultsValidationAndEnv(t *testing.T) {
+	path := writeConfig(t, `model:
+  vocab_size: 512
+research:
+  enabled: true
+  auto_on_knowledge_gap: true
+  provider: searxng
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Research.Enabled || !cfg.Research.AutoOnKnowledgeGap || cfg.Research.SearXNGURL != "http://searxng:8080" || cfg.Research.MaxSources != 5 {
+		t.Fatalf("research defaults = %+v", cfg.Research)
+	}
+	if len(cfg.Research.BlockedDomains) == 0 {
+		t.Fatal("blocked domains should default")
+	}
+
+	t.Setenv("ALETHEIA_RESEARCH_ENABLED", "false")
+	t.Setenv("ALETHEIA_RESEARCH_AUTO", "false")
+	t.Setenv("ALETHEIA_SEARXNG_URL", "http://search:8080")
+	t.Setenv("ALETHEIA_RESEARCH_MAX_SOURCES", "9")
+	research := cfg.ResearchWithEnv()
+	if research.Enabled || research.AutoOnKnowledgeGap || research.SearXNGURL != "http://search:8080" || research.MaxSources != 9 {
+		t.Fatalf("research env = %+v", research)
+	}
+}
+
+func TestResearchConfigRejectsInvalidDomain(t *testing.T) {
+	path := writeConfig(t, `model:
+  vocab_size: 512
+research:
+  blocked_domains:
+    - "https://bad.example"
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "research domains") {
+		t.Fatalf("error = %v, want research domain validation", err)
+	}
+}
+
 func writeConfig(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")

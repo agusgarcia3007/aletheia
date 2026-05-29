@@ -51,7 +51,7 @@ func TestRunServeHelpAndInvalidCheckpoint(t *testing.T) {
 		t.Fatalf("serve help:\n%s", out)
 	}
 
-	err = run([]string{"aletheia", "serve", "--auth", "none", "--checkpoint", t.TempDir(), "--addr", "127.0.0.1:0"})
+	err = run([]string{"aletheia", "serve", "--auth", "none", "--checkpoint", t.TempDir(), "--addr", "127.0.0.1:0", "--db", filepath.Join(t.TempDir(), "memory.sqlite")})
 	if err == nil || !strings.Contains(err.Error(), "load checkpoint") {
 		t.Fatalf("err = %v, want checkpoint load error", err)
 	}
@@ -209,6 +209,29 @@ func TestRunLearnExportsMemoryDatasets(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "selector_examples.jsonl")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRunResearchBackgroundAndStatus(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "memory.sqlite")
+	out, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "research", "--db", dbPath, "--query", "what is mcp", "--background"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "status: queued") || !strings.Contains(out, "job_id:") {
+		t.Fatalf("research output:\n%s", out)
+	}
+	jobsOut, err := captureStdout(t, func() error {
+		return run([]string{"aletheia", "jobs", "--db", dbPath})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(jobsOut, "jobs: 1") || !strings.Contains(jobsOut, "what is mcp") {
+		t.Fatalf("jobs output:\n%s", jobsOut)
 	}
 }
 

@@ -7,13 +7,18 @@ import (
 )
 
 type chatCompletionRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	TopP        *float64      `json:"top_p,omitempty"`
-	TopK        *int          `json:"top_k,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model       string               `json:"model"`
+	Messages    []chatMessage        `json:"messages"`
+	MaxTokens   *int                 `json:"max_tokens,omitempty"`
+	Temperature *float64             `json:"temperature,omitempty"`
+	TopP        *float64             `json:"top_p,omitempty"`
+	TopK        *int                 `json:"top_k,omitempty"`
+	Stream      bool                 `json:"stream,omitempty"`
+	Aletheia    *aletheiaChatOptions `json:"aletheia,omitempty"`
+}
+
+type aletheiaChatOptions struct {
+	Research string `json:"research,omitempty"`
 }
 
 type completionRequest struct {
@@ -23,6 +28,12 @@ type completionRequest struct {
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
 	TopK        *int     `json:"top_k,omitempty"`
+}
+
+type researchRequest struct {
+	Query      string `json:"query"`
+	Mode       string `json:"mode,omitempty"`
+	MaxSources int    `json:"max_sources,omitempty"`
 }
 
 type chatMessage struct {

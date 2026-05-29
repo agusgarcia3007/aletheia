@@ -54,3 +54,5 @@ print(response.choices[0].message.content)
 ## Security Boundary
 
 The API server only exposes checkpoint inference through `/v1/models`, `/v1/chat/completions`, and `/v1/completions`. It does not expose `solve`, verifiers, shell execution, repository access, or file mutation.
+
+For internal SearXNG-backed research, see [deploy-dokploy-searxng.md](deploy-dokploy-searxng.md).
