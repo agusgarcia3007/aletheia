@@ -705,6 +705,22 @@ ORDER BY source_rank DESC, id ASC
 	return out, rows.Err()
 }
 
+func (s *Store) WebSourceByID(ctx context.Context, id string) (WebSource, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, job_id, url, final_url, title, snippet, source_rank, fetched_at, status, content_hash, trust_score, byte_size, content_type
+FROM web_sources
+WHERE id = ?
+`, id)
+	source, err := scanWebSource(row)
+	if err == sql.ErrNoRows {
+		return WebSource{}, false, nil
+	}
+	if err != nil {
+		return WebSource{}, false, err
+	}
+	return source, true, nil
+}
+
 func (s *Store) WebClaimsByJob(ctx context.Context, jobID string) ([]WebClaim, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT c.id, c.source_id, c.claim, c.confidence, c.created_at

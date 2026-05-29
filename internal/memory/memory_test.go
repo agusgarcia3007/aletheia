@@ -371,6 +371,13 @@ func TestResearchJobSourceClaimLifecycle(t *testing.T) {
 	if len(sources) != 1 || len(claims) != 1 {
 		t.Fatalf("sources=%+v claims=%+v", sources, claims)
 	}
+	byID, ok, err := store.WebSourceByID(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || byID.FinalURL != source.FinalURL {
+		t.Fatalf("source by id = %+v ok=%v", byID, ok)
+	}
 }
 
 func itoa64(v int64) string {

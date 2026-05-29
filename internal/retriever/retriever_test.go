@@ -118,6 +118,81 @@ The verifier bus stores structured evidence.
 	}
 }
 
+func TestRetrieverRejectsUnrelatedWebEvidenceAndUsesSourceURL(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	sourceID := "source_mcp_1"
+	if _, err := store.UpsertWebSource(ctx, memory.WebSource{
+		ID:          sourceID,
+		JobID:       "job-1",
+		URL:         "https://modelcontextprotocol.io/docs/getting-started/intro",
+		FinalURL:    "https://modelcontextprotocol.io/docs/getting-started/intro",
+		Title:       "Model Context Protocol",
+		Status:      "stored",
+		ContentHash: "hash",
+		TrustScore:  0.8,
+		ByteSize:    512,
+		ContentType: "text/html",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc, _, err := store.UpsertDocument(ctx, filepath.Join("web", sourceID+".txt"), "hash", `Model Context Protocol
+
+The Model Context Protocol (MCP) is an open protocol for connecting AI agents to tools and data sources.
+
+Source URL: https://modelcontextprotocol.io/docs/getting-started/intro`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReplaceChunks(ctx, doc.ID, []memory.Chunk{{
+		OffsetStart: 0,
+		OffsetEnd:   181,
+		Text: `Model Context Protocol
+
+The Model Context Protocol (MCP) is an open protocol for connecting AI agents to tools and data sources.
+
+Source URL: https://modelcontextprotocol.io/docs/getting-started/intro`,
+		EmbeddingID: EmbeddingID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	r := Retriever{Store: store}
+	unrelated, err := r.Answer(ctx, "que fue la guerra de vietnam?", SearchOptions{TopK: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unrelated.Verified || unrelated.Status != "abstained" {
+		t.Fatalf("unrelated answer = %+v", unrelated)
+	}
+	answer, err := r.Answer(ctx, "what is MCP in agents?", SearchOptions{TopK: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Verified || !strings.Contains(answer.Text, "Model Context Protocol") {
+		t.Fatalf("answer = %+v", answer)
+	}
+	if len(answer.Citations) == 0 || answer.Citations[0].Path != "https://modelcontextprotocol.io/docs/getting-started/intro" {
+		t.Fatalf("citations = %+v", answer.Citations)
+	}
+}
+
+func TestBestSentencePrefersDefinitionAcrossHits(t *testing.T) {
+	hits := []Hit{
+		{
+			Text:         "Agents & AgentSpec Agents couple instructions with the MCP servers and optional functions they may call.",
+			KeywordScore: 0.5,
+		},
+		{
+			Text:         "The Model Context Protocol (MCP) is an open protocol for connecting AI agents to tools and data sources.",
+			KeywordScore: 0.4,
+		},
+	}
+	got := bestSentenceFromHits("que es un mcp?", hits)
+	if !strings.Contains(got, "Model Context Protocol") {
+		t.Fatalf("best sentence = %q", got)
+	}
+}
+
 func openStore(t *testing.T) *memory.Store {
 	t.Helper()
 	store, err := memory.Open(filepath.Join(t.TempDir(), "memory.sqlite"))

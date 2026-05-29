@@ -255,22 +255,26 @@ func (r Retriever) Answer(ctx context.Context, query string, opts SearchOptions)
 	if err != nil {
 		return Answer{}, err
 	}
-	if len(hits) == 0 || hits[0].Score < opts.MinConfidence {
+	if len(hits) == 0 || hits[0].Score < opts.MinConfidence || !hasMeaningfulEvidenceOverlap(query, hits[0].Text) {
 		return Answer{
 			Text:   "No hay evidencia local suficiente para responder.",
 			Status: "abstained",
 			Hits:   hits,
 		}, nil
 	}
-	sentence := bestSentence(query, hits[0].Text)
+	sentence := bestSentenceFromHits(query, hits)
+	if sentence == "" {
+		sentence = bestSentence(query, hits[0].Text)
+	}
 	if sentence == "" {
 		sentence = hits[0].Preview
 	}
 	citations := make([]Citation, 0, len(hits))
 	textCitations := make([]verifier.TextEvidenceCitation, 0, len(hits))
 	for _, hit := range hits {
+		path := citationPath(ctx, r.Store, hit)
 		citations = append(citations, Citation{
-			Path:        hit.Path,
+			Path:        path,
 			ChunkID:     hit.ChunkID,
 			OffsetStart: hit.OffsetStart,
 			OffsetEnd:   hit.OffsetEnd,
@@ -388,7 +392,7 @@ func sha256Hex(raw []byte) string {
 var tokenPattern = regexp.MustCompile(`[\pL\pN_]+`)
 
 func tokenSet(text string) map[string]int {
-	matches := tokenPattern.FindAllString(strings.ToLower(text), -1)
+	matches := tokenPattern.FindAllString(normalizeTokens(text), -1)
 	out := make(map[string]int, len(matches))
 	for _, match := range matches {
 		out[match]++
@@ -407,6 +411,57 @@ func keywordScore(query map[string]int, doc map[string]int) float64 {
 		}
 	}
 	return float64(overlap) / math.Sqrt(float64(len(query)*len(doc)))
+}
+
+func hasMeaningfulEvidenceOverlap(query string, text string) bool {
+	queryTokens := meaningfulTokenSet(query)
+	if len(queryTokens) == 0 {
+		return false
+	}
+	textTokens := meaningfulTokenSet(text)
+	var overlap int
+	for token := range queryTokens {
+		if textTokens[token] > 0 {
+			overlap++
+		}
+	}
+	if len(queryTokens) <= 2 {
+		return overlap >= 1
+	}
+	return overlap >= 2
+}
+
+func meaningfulTokenSet(text string) map[string]int {
+	tokens := tokenSet(text)
+	for token := range tokens {
+		if len([]rune(token)) <= 2 || stopWords[token] {
+			delete(tokens, token)
+		}
+	}
+	return tokens
+}
+
+var stopWords = map[string]bool{
+	"a": true, "an": true, "and": true, "are": true, "as": true, "by": true, "for": true, "from": true,
+	"how": true, "is": true, "it": true, "of": true, "on": true, "or": true, "the": true, "to": true,
+	"what": true, "when": true, "where": true, "who": true, "why": true, "with": true,
+	"como": true, "con": true, "cual": true, "cuando": true, "de": true, "del": true, "donde": true,
+	"el": true, "en": true, "es": true, "esa": true, "ese": true, "eso": true, "esta": true, "este": true,
+	"fue": true, "la": true, "las": true, "lo": true, "los": true, "para": true, "por": true, "que": true,
+	"quien": true, "son": true, "un": true, "una": true, "y": true,
+}
+
+func normalizeTokens(text string) string {
+	replacer := strings.NewReplacer(
+		"á", "a",
+		"é", "e",
+		"í", "i",
+		"ó", "o",
+		"ú", "u",
+		"ü", "u",
+		"ñ", "n",
+	)
+	return replacer.Replace(strings.ToLower(text))
 }
 
 func hashVector(text string) []float64 {
@@ -479,17 +534,110 @@ func preview(text string, maxRunes int) string {
 
 func bestSentence(query string, text string) string {
 	queryTokens := tokenSet(query)
-	parts := splitSentences(text)
+	best, _ := bestSentenceInText(query, queryTokens, text)
+	return best
+}
+
+func bestSentenceFromHits(query string, hits []Hit) string {
+	queryTokens := tokenSet(query)
 	best := ""
 	bestScore := -1.0
-	for _, part := range parts {
-		score := keywordScore(queryTokens, tokenSet(part))
-		if score > bestScore {
-			best = strings.TrimSpace(part)
+	for _, hit := range hits {
+		candidate, score := bestSentenceInText(query, queryTokens, hit.Text)
+		score += hit.KeywordScore * 0.05
+		if candidate != "" && score > bestScore {
+			best = candidate
 			bestScore = score
 		}
 	}
 	return best
+}
+
+func bestSentenceInText(query string, queryTokens map[string]int, text string) (string, float64) {
+	parts := splitSentences(text)
+	best := ""
+	bestScore := -1.0
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if !validAnswerSentence(part) {
+			continue
+		}
+		score := answerSentenceScore(query, queryTokens, part)
+		if score > bestScore {
+			best = part
+			bestScore = score
+		}
+	}
+	return best, bestScore
+}
+
+func answerSentenceScore(query string, queryTokens map[string]int, sentence string) float64 {
+	score := keywordScore(queryTokens, tokenSet(sentence))
+	normalizedQuery := normalizeTokens(query)
+	normalizedSentence := normalizeTokens(sentence)
+	if isDefinitionQuery(normalizedQuery) && hasDefinitionShape(normalizedSentence) {
+		score += 0.35
+	}
+	return score
+}
+
+func isDefinitionQuery(query string) bool {
+	return strings.Contains(query, "que es ") ||
+		strings.Contains(query, "what is ") ||
+		strings.Contains(query, "what are ")
+}
+
+func hasDefinitionShape(sentence string) bool {
+	return strings.Contains(sentence, " is ") ||
+		strings.Contains(sentence, " are ") ||
+		strings.Contains(sentence, " es ") ||
+		strings.Contains(sentence, " son ")
+}
+
+func validAnswerSentence(text string) bool {
+	tokens := meaningfulTokenSet(text)
+	if len(tokens) < 3 {
+		return false
+	}
+	if strings.Contains(text, "=") || strings.Contains(text, "include_") || strings.Contains(text, "await ") {
+		return false
+	}
+	return len([]rune(text)) >= 25
+}
+
+func citationPath(ctx context.Context, store *memory.Store, hit Hit) string {
+	if url := sourceURLFromText(hit.Text); url != "" {
+		return url
+	}
+	if store == nil {
+		return hit.Path
+	}
+	base := filepath.Base(hit.Path)
+	if !strings.HasPrefix(base, "source_") || !strings.HasSuffix(base, ".txt") {
+		return hit.Path
+	}
+	sourceID := strings.TrimSuffix(base, ".txt")
+	source, ok, err := store.WebSourceByID(ctx, sourceID)
+	if err != nil || !ok {
+		return hit.Path
+	}
+	if source.FinalURL != "" {
+		return source.FinalURL
+	}
+	if source.URL != "" {
+		return source.URL
+	}
+	return hit.Path
+}
+
+func sourceURLFromText(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Source URL:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "Source URL:"))
+		}
+	}
+	return ""
 }
 
 func splitSentences(text string) []string {
