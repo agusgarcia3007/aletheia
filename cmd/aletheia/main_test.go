@@ -237,6 +237,31 @@ func TestRunDatasetBuildAndTokenizerTrain(t *testing.T) {
 	if _, err := os.Stat(tokenizerPath); err != nil {
 		t.Fatal(err)
 	}
+
+	curriculumPath := filepath.Join(root, "mikros_curriculum.jsonl")
+	out, err = captureStdout(t, func() error {
+		return run([]string{"aletheia", "dataset", "build", "--profile", "mikros-curriculum-v1", "--out", curriculumPath})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "profile: mikros-curriculum-v1") {
+		t.Fatalf("curriculum output:\n%s", out)
+	}
+	raw, err := os.ReadFile(curriculumPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(raw), "\n"); got < 1000 {
+		t.Fatalf("curriculum examples = %d, want >= 1000", got)
+	}
+	if !strings.Contains(string(raw), `"expected_mode":"research"`) || !strings.Contains(string(raw), `"negative":true`) {
+		sample := string(raw)
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		t.Fatalf("curriculum missing metadata:\n%s", sample)
+	}
 }
 
 func TestRunResearchBackgroundAndStatus(t *testing.T) {

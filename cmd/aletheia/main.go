@@ -96,6 +96,7 @@ Usage:
   aletheia config inspect --config configs/micro.yaml
   aletheia train --config configs/aletheia-mikros.yaml --dataset datasets/aletheia_mikros.jsonl --out checkpoints/aletheia-mikros
   aletheia dataset build --profile mikros-v1 --out datasets/generated/mikros_v1.jsonl
+  aletheia dataset build --profile mikros-curriculum-v1 --out datasets/generated/mikros_curriculum_v1.jsonl
   aletheia tokenizer train --dataset datasets/generated/mikros_v1.jsonl --out checkpoints/aletheia-mikros/tokenizer.json
   aletheia train-selector --dataset datasets/selector_bootstrap.jsonl --out checkpoints/selector-bootstrap
   aletheia run --checkpoint checkpoints/aletheia-mikros --prompt "<USER>hola como estas?<ASSISTANT>"

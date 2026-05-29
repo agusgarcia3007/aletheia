@@ -212,3 +212,11 @@
 - Advertise the real served context and output limits through health/readiness metadata; do not pretend the byte-tokenizer Mikros checkpoint has a 65K context.
 - Add deterministic tool-loop state: respect `tool_choice`, avoid repeated tool fingerprints, cap tool calls with `ALETHEIA_AGENT_MAX_TOOL_CALLS`, and prefer list/read/search progression for repo analysis.
 - Keep command suggestions read-only or verifier-oriented by default; do not emit destructive shell commands.
+
+## Milestone Mikros Artifact V1
+
+- Treat bad answers as product failures, not model personality. Factual/current questions may not fall through to free generation; they must use canonical evidence, start research, or abstain.
+- Keep deterministic smalltalk/help replies available for trained checkpoints when the intent is clearly smalltalk; this prevents a trained-but-weak checkpoint from answering capability questions with unrelated greetings.
+- Expand contextual follow-ups with the previous user topic for retrieval/research, but ask for context on ambiguous follow-ups such as `y entonces?`.
+- Add `mikros-curriculum-v1` as the first structured curriculum profile with intent, expected mode, answer style, tags, and negative examples.
+- Add `evals/mikros_artifact` as the product gate for natural answers, zero links-only responses, correct coding routing, factual abstention, and canonical research answers.

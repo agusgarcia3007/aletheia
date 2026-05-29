@@ -400,6 +400,53 @@ func TestChatSmalltalkDoesNotCreateResearchJob(t *testing.T) {
 	}
 }
 
+func TestMikrosSmalltalkHelpWorksWithTrainedCheckpoint(t *testing.T) {
+	server := newTestServerWithExamples(t, []string{
+		`{"prompt":"<USER>hola<ASSISTANT>","completion":"Hola entrenado.<EOS>"}`,
+	}, Options{APIKey: "secret"})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"que puedes hacer?"}]}`, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Puedo conversar") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFactualQuestionsNeverFallBackToGreeting(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServerWithExamples(t, []string{
+		`{"prompt":"<USER>hola<ASSISTANT>","completion":"Hola entrenado.<EOS>"}`,
+	}, Options{
+		APIKey: "secret",
+		Store:  store,
+		Research: research.Options{
+			Enabled:            true,
+			AutoOnKnowledgeGap: true,
+			MaxSources:         3,
+		},
+	})
+	body := `{"model":"aletheia-mikros","messages":[
+		{"role":"user","content":"hola"},
+		{"role":"assistant","content":"Hola."},
+		{"role":"user","content":"quiero saber quien gano la ultima copa america"}
+	]}`
+	rec := serveJSON(t, server, "/v1/chat/completions", body, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Hola. Soy Aletheia") || strings.Contains(rec.Body.String(), "respuestas basicas") || !strings.Contains(rec.Body.String(), "job_id=") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestAmbiguousFollowupDoesNotRepeatGreeting(t *testing.T) {
+	server := newTestServerWithExamples(t, []string{
+		`{"prompt":"<USER>hola<ASSISTANT>","completion":"Hola entrenado.<EOS>"}`,
+	}, Options{APIKey: "secret"})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"hola"},{"role":"assistant","content":"Hola."},{"role":"user","content":"y entonces?"}]}`, "secret")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Necesito un poco mas de contexto") || strings.Contains(rec.Body.String(), "Hola. Soy") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestChatActionRequestsDoNotTriggerResearch(t *testing.T) {
 	store := newTestStore(t)
 	server := newTestServer(t, Options{
@@ -584,6 +631,45 @@ func TestChatKnowledgeGapQueuesResearchJob(t *testing.T) {
 	}
 	if len(jobs) != 1 || jobs[0].Status != "queued" {
 		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestCompletedResearchAnswerForSportsQuestionIsNatural(t *testing.T) {
+	store := newTestStore(t)
+	job, err := store.CreateResearchJob(contextBackground(), memory.ResearchJob{
+		ID:         "research-copa-america",
+		Query:      "quien gano la ultima copa america?",
+		Status:     "completed",
+		Mode:       "background",
+		MaxSources: 2,
+		Answer:     "Todos los campeones de la CONMEBOL Copa America en la historia\n\nEvidence status: web_verified",
+		Confidence: 0.8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertWebSource(contextBackground(), memory.WebSource{
+		ID:          "source-copa-america",
+		JobID:       job.ID,
+		URL:         "https://copaamerica.com/es/novedades/todos-los-campeones-de-la-conmebol-copa-america",
+		FinalURL:    "https://copaamerica.com/es/novedades/todos-los-campeones-de-la-conmebol-copa-america",
+		Title:       "Todos los campeones de la CONMEBOL Copa America",
+		Snippet:     "Argentina ganó la ultima Copa America tras vencer a Colombia en la final.",
+		Status:      "stored",
+		ContentHash: "copa",
+		TrustScore:  0.8,
+		ByteSize:    10,
+		ContentType: "text/html",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, Options{APIKey: "secret", Store: store, Research: research.Options{Enabled: true, AutoOnKnowledgeGap: true, MinTrustScore: 0.35}})
+	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"quiero saber quien gano la ultima copa america"}]}`, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Argentina ganó") || strings.Contains(rec.Body.String(), "Todos los campeones") || strings.Contains(rec.Body.String(), "Evidence status") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 

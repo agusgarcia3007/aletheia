@@ -269,7 +269,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 		return
 	}
-	query := strings.TrimSpace(lastUserMessage(req.Messages))
+	query := strings.TrimSpace(effectiveUserQuery(req.Messages))
 	if query != "" && isChatActionRequest(query) {
 		generated, usage, err := s.generate(served, prompt, generationOptions{
 			MaxTokens:   maxTokens,
@@ -305,16 +305,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	}
+	if query != "" && isAmbiguousFollowup(lastUserMessage(req.Messages)) {
+		content := "Necesito un poco mas de contexto para seguir. Decime el tema o la pregunta completa y respondo con evidencia si hace falta."
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
+		return
+	}
 	if query != "" && !isResearchableQuestion(query) {
 		if reply, ok := trainedExampleReply(served, req.Messages); ok {
 			respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
 			return
 		}
-		if served.ID == mikrosModelName && served.Manifest.Step == 0 {
-			if reply, ok := basicMikrosChatReply(served.ID, req.Messages); ok {
-				respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
-				return
-			}
+		if reply, ok := basicMikrosChatReply(served.ID, req.Messages); ok {
+			respond(s.chatResponse(responseModelID(req.Model, served.ID), reply, s.textUsage(prompt, reply)))
+			return
 		}
 	}
 	if query != "" && s.store != nil {
@@ -344,6 +347,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 			return
 		}
+	}
+	if query != "" && isFactualKnowledgeQuestion(query) {
+		content := "No tengo evidencia local suficiente para responder eso de forma confiable. Si habilitas research, puedo buscar fuentes y guardar la evidencia para futuras preguntas."
+		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
+		return
 	}
 	if routed && served.ID == hephaestusModelName {
 		content := "Puedo ayudar con codigo, pero necesito un poco mas de contexto: lenguaje, objetivo, entrada/salida esperada y restricciones. No voy a buscar fuentes web para inventar una respuesta."
@@ -780,6 +788,36 @@ func shouldResearch(query string, mode string, opts research.Options) bool {
 	return opts.AutoOnKnowledgeGap && !isCodingTask(query)
 }
 
+func effectiveUserQuery(messages []chatMessage) string {
+	last := strings.TrimSpace(lastUserMessage(messages))
+	if last == "" {
+		return ""
+	}
+	if !isContextualFollowup(last) {
+		return last
+	}
+	previous := strings.TrimSpace(previousUserMessage(messages))
+	if previous == "" {
+		return last
+	}
+	return strings.TrimSpace(previous + " " + last)
+}
+
+func previousUserMessage(messages []chatMessage) string {
+	seenLast := false
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		if !seenLast {
+			seenLast = true
+			continue
+		}
+		return messages[i].Content
+	}
+	return ""
+}
+
 func (s *Server) completedResearchAnswer(ctx context.Context, query string) (string, bool) {
 	if s.store == nil {
 		return "", false
@@ -1098,6 +1136,9 @@ func researchAnswerMatchesQuery(query string, job memory.ResearchJob) bool {
 	if isUnsupportedFutureOutcomeQuestion(query) {
 		return false
 	}
+	if answerIsInsufficient(job.Answer) {
+		return false
+	}
 	years := fourDigitYears(query)
 	if len(years) == 0 {
 		return true
@@ -1109,6 +1150,14 @@ func researchAnswerMatchesQuery(query string, job memory.ResearchJob) bool {
 		}
 	}
 	return true
+}
+
+func answerIsInsufficient(answer string) bool {
+	normalized := normalizeBasicChat(answer)
+	return normalized == "" ||
+		strings.Contains(normalized, "no hay evidencia web suficiente") ||
+		strings.Contains(normalized, "no tengo evidencia suficiente") ||
+		strings.Contains(normalized, "insufficient evidence")
 }
 
 func meaningfulChatTokens(text string) map[string]bool {
@@ -1183,11 +1232,43 @@ func isResearchableQuestion(query string) bool {
 	if hasAny(normalized, "hola", "gracias", "chau", "adios", "hello", "thanks", "help", "ayuda") {
 		return false
 	}
-	return hasAny(normalized,
+	return isFactualKnowledgeQuestion(normalized) || hasAny(normalized,
 		"que fue", "que es", "quien fue", "quien es", "cuando", "donde", "por que",
 		"what is", "what was", "who is", "who was", "when", "where", "why",
 		"historia", "guerra", "pais", "empresa", "protocolo", "actual", "latest",
 	)
+}
+
+func isFactualKnowledgeQuestion(query string) bool {
+	normalized := normalizeBasicChat(query)
+	if normalized == "" || isChatActionRequest(normalized) || isUnsupportedFutureOutcomeQuestion(normalized) {
+		return false
+	}
+	if hasAny(normalized, "que puedes hacer", "que podes hacer", "que sabes hacer", "ayuda", "help") {
+		return false
+	}
+	return hasAny(normalized,
+		"quien gano", "quienes ganaron", "quien ganó", "ganador", "campeon", "campeones",
+		"ultima copa", "ultimas copa", "ultimas copas", "copa america", "mundial brasil",
+		"que fue", "que es", "quien fue", "quien es", "cuando fue", "donde fue",
+		"what is", "what was", "who won", "who is", "latest", "last world cup",
+	)
+}
+
+func isContextualFollowup(query string) bool {
+	normalized := normalizeBasicChat(query)
+	if normalized == "" {
+		return false
+	}
+	return hasAny(normalized,
+		"pero dime", "pero decime", "dime los", "decime los", "y los", "y las",
+		"resultados de", "ultimas 5", "ultimos 5", "las ultimas", "los ultimos",
+	)
+}
+
+func isAmbiguousFollowup(query string) bool {
+	normalized := normalizeBasicChat(query)
+	return normalized == "y entonces" || normalized == "entonces" || normalized == "y ahora" || normalized == "ok y"
 }
 
 var yearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)
