@@ -346,13 +346,17 @@ func canonicalClaimAnswer(query string, text string) string {
 		best = text
 	}
 	best = trimBeforeCoreTerm(query, best)
+	best = tidyProse(best)
 	if len([]rune(best)) > 420 {
 		runes := []rune(best)
 		best = string(runes[:420])
 		if idx := strings.LastIndex(best, " "); idx > 180 {
 			best = best[:idx]
 		}
-		best += "."
+		best = strings.TrimRight(best, " ,;:")
+		if !strings.HasSuffix(best, ".") && !strings.HasSuffix(best, "!") && !strings.HasSuffix(best, "?") {
+			best += "."
+		}
 	}
 	return strings.TrimSpace(best)
 }
@@ -368,8 +372,15 @@ func cleanExtractedSentence(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
+// sentenceSplitRe breaks text into candidate sentences. Beyond ordinary
+// terminators it also splits on colons and on stray HTML/list separators
+// (quotes, ">", "|", bullets) so page chrome glued onto a run-on snippet — an
+// author byline, a publication date, a "Foo: Diferencias…" header — lands in
+// its own low-overlap fragment and loses to the real answer fragment.
+var sentenceSplitRe = regexp.MustCompile(`[.!?:]\s+|["|•›»>]`)
+
 func splitSentences(text string) []string {
-	parts := regexp.MustCompile(`[.!?]\s+`).Split(text, -1)
+	parts := sentenceSplitRe.Split(text, -1)
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
@@ -380,32 +391,38 @@ func splitSentences(text string) []string {
 	return out
 }
 
+// trimBeforeCoreTerm drops leading page chrome (author bylines, share widgets,
+// publication dates, "Este artículo contiene" boilerplate) by starting the
+// answer at the earliest meaningful query term. It bakes in NO marker words:
+// when a distinctive query keyword first appears only after a run of unrelated
+// lead-in text, everything before it is treated as chrome and removed. A
+// keyword that opens the sentence normally (within the first few words) is left
+// untouched, so genuine short preambles survive.
 func trimBeforeCoreTerm(query string, text string) string {
 	lower := strings.ToLower(text)
-	if !strings.Contains(lower, "whatsapp") &&
-		!strings.Contains(lower, "copiar") &&
-		!strings.Contains(lower, "fotografia") &&
-		!strings.Contains(lower, "redaccion") &&
-		!strings.Contains(lower, "publicado") &&
-		!strings.Contains(lower, "lo ultimo") {
-		return text
-	}
+	best := -1
 	for token := range keywordSet(query) {
-		if len(token) < 4 {
+		if len([]rune(token)) < 4 {
 			continue
 		}
-		if idx := strings.Index(lower, token); idx > 24 && idx < len(text) {
-			best := idx
-			for other := range keywordSet(query) {
-				if len(other) < 4 {
-					continue
-				}
-				if otherIdx := strings.Index(lower, other); otherIdx > 24 && otherIdx < best {
-					best = otherIdx
-				}
-			}
-			return strings.TrimSpace(text[best:])
+		idx := strings.Index(lower, token)
+		if idx < 0 {
+			continue
 		}
+		if best == -1 || idx < best {
+			best = idx
+		}
+	}
+	if best <= 24 {
+		return text
+	}
+	// Only treat the lead-in as chrome when it carries a structural chrome signal
+	// (a stray HTML/quote leak or list/byline separator). A normal sentence
+	// subject before the keyword (e.g. "The Model Context Protocol lets agents…")
+	// has none of these, so it is left intact rather than truncated.
+	leadIn := text[:best]
+	if strings.ContainsAny(leadIn, "\"|•›»>") {
+		return strings.TrimSpace(text[best:])
 	}
 	return text
 }

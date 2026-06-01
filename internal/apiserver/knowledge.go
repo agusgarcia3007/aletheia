@@ -55,14 +55,13 @@ func (s *Server) codingKnowledgeOrLearn(ctx context.Context, query string) (stri
 	if s.store == nil || !s.research.Enabled {
 		return "", "", false
 	}
-	if job, ok := s.matchingLearningJob(ctx, query); ok {
-		return "Sigo aprendiendo eso (job_id=" + job.ID + "). Volvé a preguntar en unos segundos y te respondo con lo aprendido y su fuente.", "", true
+	if _, ok := s.matchingLearningJob(ctx, query); ok {
+		return "Sigo aprendiendo eso. Volvé a preguntar en unos segundos y te respondo con lo aprendido y su fuente.", "", true
 	}
-	job, err := s.enqueueResearch(ctx, query, "background", 0)
-	if err != nil {
+	if _, err := s.enqueueResearch(ctx, query, "background", 0); err != nil {
 		return "", "", false
 	}
-	return "No conozco eso todavía, así que lo estoy aprendiendo ahora (job_id=" + job.ID + "). Volvé a preguntar en unos segundos y te respondo con lo aprendido y su fuente.", "", true
+	return "No conozco eso todavía, así que lo estoy aprendiendo ahora. Volvé a preguntar en unos segundos y te respondo con lo aprendido y su fuente.", "", true
 }
 
 // matchingLearningJob reports a non-failed job whose query overlaps this one, so

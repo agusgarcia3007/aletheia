@@ -44,7 +44,7 @@ func TestCodingLearnOnDemandLoop(t *testing.T) {
 
 	// 1) First ask: Aletheia does not know Swift. It must say so AND start learning.
 	first := chatContent(t, server, swiftQuery)
-	if !strings.Contains(first, "aprendiendo") || !strings.Contains(first, "job_id=") {
+	if !strings.Contains(first, "aprendiendo") || !strings.Contains(first, "Volvé a preguntar") {
 		t.Fatalf("first answer should start learning, got: %q", first)
 	}
 

@@ -524,7 +524,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if jobID != "" {
-				content := fmt.Sprintf("Estoy buscando evidencia para responderte (job_id=%s). Volvé a preguntar en unos segundos y te respondo desde lo que encuentre.", jobID)
+				content := "Estoy buscando información para responderte con fuentes. Volvé a preguntar en unos segundos y te respondo desde lo que encuentre."
 				s.expert("research_learn")
 				respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 				return
@@ -1168,33 +1168,38 @@ func formatResearchAnswer(query string, job memory.ResearchJob, sources []memory
 	}
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(answer))
-	if len(sources) > 0 {
-		b.WriteString("\n\nFuentes:\n")
-		seen := map[string]bool{}
-		written := 0
-		for _, source := range sources {
-			if !publicWebSourceAllowed(source) {
-				continue
-			}
-			url := source.FinalURL
-			if url == "" {
-				url = source.URL
-			}
-			if url == "" || seen[url] {
-				continue
-			}
-			seen[url] = true
-			title := publicSourceTitle(source.Title)
-			if title == "" {
-				b.WriteString(fmt.Sprintf("- %s\n", url))
-			} else {
-				b.WriteString(fmt.Sprintf("- %s - %s\n", title, url))
-			}
-			written++
-			if written >= 5 {
-				break
-			}
+	// Build the source bullets first; only emit the "Fuentes:" header if at
+	// least one survives filtering, so a fully-filtered source list never leaves
+	// an orphan heading with nothing under it.
+	var bullets strings.Builder
+	seen := map[string]bool{}
+	written := 0
+	for _, source := range sources {
+		if !publicWebSourceAllowed(source) {
+			continue
 		}
+		url := source.FinalURL
+		if url == "" {
+			url = source.URL
+		}
+		if url == "" || seen[url] {
+			continue
+		}
+		seen[url] = true
+		title := publicSourceTitle(source.Title)
+		if title == "" {
+			bullets.WriteString(fmt.Sprintf("- %s\n", url))
+		} else {
+			bullets.WriteString(fmt.Sprintf("- %s - %s\n", title, url))
+		}
+		written++
+		if written >= 5 {
+			break
+		}
+	}
+	if written > 0 {
+		b.WriteString("\n\nFuentes:\n")
+		b.WriteString(bullets.String())
 	}
 	return strings.TrimSpace(b.String()), true
 }
@@ -1313,7 +1318,10 @@ func cleanPublicResearchText(query string, text string) string {
 		if idx := strings.LastIndex(best, " "); idx > 180 {
 			best = best[:idx]
 		}
-		best += "."
+		best = strings.TrimRight(best, " ,;:")
+		if !strings.HasSuffix(best, ".") && !strings.HasSuffix(best, "!") && !strings.HasSuffix(best, "?") {
+			best += "."
+		}
 	}
 	return strings.TrimSpace(best)
 }
@@ -1352,7 +1360,8 @@ func stripEvidenceLines(text string) string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		lower := strings.ToLower(strings.TrimSpace(line))
-		if strings.HasPrefix(lower, "evidence status:") || strings.HasPrefix(lower, "source:") {
+		if strings.HasPrefix(lower, "evidence status:") || strings.HasPrefix(lower, "source:") ||
+			strings.HasPrefix(lower, "source url:") || strings.HasPrefix(lower, "fetched:") {
 			continue
 		}
 		lines = append(lines, line)
@@ -1379,8 +1388,10 @@ func stripPageChrome(text string) string {
 	for _, value := range replacements {
 		text = strings.ReplaceAll(text, value, " ")
 	}
-	// Drop segments (split on sentence and ":" boundaries) that are page chrome.
-	segments := regexp.MustCompile(`[.!?:]\s+`).Split(text, -1)
+	// Drop sentence-level segments that are page chrome. We split on sentence
+	// terminators only (not ":") so we never rejoin a colon clause with ". " and
+	// silently change its meaning.
+	segments := regexp.MustCompile(`[.!?]\s+`).Split(text, -1)
 	kept := make([]string, 0, len(segments))
 	for _, seg := range segments {
 		if containsChrome(seg) {
@@ -1428,32 +1439,32 @@ func splitPublicSentences(text string) []string {
 	return out
 }
 
+// trimBeforePublicCoreTerm drops leading page chrome by starting the answer at
+// the earliest meaningful query term. Like its research-package counterpart it
+// bakes in NO marker words: it only trims when the lead-in before the first
+// keyword carries a structural chrome signal (stray HTML/quote leak or
+// list/byline separator). A normal sentence subject before the keyword is left
+// intact rather than truncated.
 func trimBeforePublicCoreTerm(query string, text string) string {
 	lower := strings.ToLower(text)
-	if !strings.Contains(lower, "whatsapp") &&
-		!strings.Contains(lower, "copiar") &&
-		!strings.Contains(lower, "fotografia") &&
-		!strings.Contains(lower, "redaccion") &&
-		!strings.Contains(lower, "publicado") &&
-		!strings.Contains(lower, "lo ultimo") {
-		return text
-	}
+	best := -1
 	for token := range meaningfulChatTokens(query) {
-		if len(token) < 4 {
+		if len([]rune(token)) < 4 {
 			continue
 		}
-		if idx := strings.Index(lower, token); idx > 24 && idx < len(text) {
-			best := idx
-			for other := range meaningfulChatTokens(query) {
-				if len(other) < 4 {
-					continue
-				}
-				if otherIdx := strings.Index(lower, other); otherIdx > 24 && otherIdx < best {
-					best = otherIdx
-				}
-			}
-			return strings.TrimSpace(text[best:])
+		idx := strings.Index(lower, token)
+		if idx < 0 {
+			continue
 		}
+		if best == -1 || idx < best {
+			best = idx
+		}
+	}
+	if best <= 24 {
+		return text
+	}
+	if strings.ContainsAny(text[:best], "\"|•›»>") {
+		return strings.TrimSpace(text[best:])
 	}
 	return text
 }
@@ -1562,10 +1573,22 @@ func meaningfulOverlap(left map[string]bool, right map[string]bool) int {
 }
 
 func requiredMeaningfulOverlap(tokenCount int) int {
-	if tokenCount <= 2 {
+	switch {
+	case tokenCount <= 1:
 		return 1
+	case tokenCount <= 3:
+		// The distinctive terms must appear, not just one shared generic word: a
+		// single overlap like "protocolo" (common to both an HTTP and a TCP/UDP
+		// question) must never pull an unrelated cached answer across topics.
+		return 2
+	default:
+		// Roughly 60% of the query's meaningful terms, floored at 2.
+		req := (tokenCount*3 + 4) / 5
+		if req < 2 {
+			req = 2
+		}
+		return req
 	}
-	return 2
 }
 
 func isChatActionRequest(query string) bool {
@@ -1641,6 +1664,7 @@ func isFactualKnowledgeQuestion(query string) bool {
 	return hasAny(normalized,
 		"quien ", "quienes ", "que ", "cual ", "cuales ",
 		"cuando ", "donde ", "cuanto ", "cuanta ", "cuantos ", "cuantas ", "por que ",
+		"como ", "how ",
 		"who ", "what ", "which ", "when ", "where ", "how many", "how much", "why ",
 		"ganador", "campeon", "campeones", "copa america", "mundial", "latest",
 	)

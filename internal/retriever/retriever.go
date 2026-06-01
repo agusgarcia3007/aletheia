@@ -316,7 +316,9 @@ func (r Retriever) Answer(ctx context.Context, query string, opts SearchOptions)
 		sentence = bestSentence(query, hits[0].Text)
 	}
 	if sentence == "" {
-		sentence = hits[0].Preview
+		// Last resort: a metadata-stripped preview, never the raw chunk with its
+		// "Source URL:"/"Fetched:" plumbing lines.
+		sentence = preview(stripChunkMetadata(hits[0].Text), 220)
 	}
 	citations := make([]Citation, 0, len(hits))
 	textCitations := make([]verifier.TextEvidenceCitation, 0, len(hits))
@@ -651,6 +653,11 @@ func validAnswerSentence(text string) bool {
 	if strings.Contains(text, "=") || strings.Contains(text, "include_") || strings.Contains(text, "await ") {
 		return false
 	}
+	// Never surface stored-chunk plumbing as an answer sentence.
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "source url:") || strings.Contains(lower, "fetched:") {
+		return false
+	}
 	return len([]rune(text)) >= 25
 }
 
@@ -687,6 +694,21 @@ func sourceURLFromText(text string) string {
 		}
 	}
 	return ""
+}
+
+// stripChunkMetadata removes the provenance lines ("Source URL:", "Fetched:")
+// that storeSource bakes into every stored chunk, so they never leak into a
+// user-facing preview fallback. The human-readable body is left untouched.
+func stripChunkMetadata(text string) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(lower, "source url:") || strings.HasPrefix(lower, "fetched:") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func splitSentences(text string) []string {

@@ -462,7 +462,7 @@ func TestFactualQuestionsNeverFallBackToGreeting(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "Hola. Soy Aletheia") || strings.Contains(rec.Body.String(), "respuestas basicas") || !strings.Contains(rec.Body.String(), "job_id=") {
+	if strings.Contains(rec.Body.String(), "Hola. Soy Aletheia") || strings.Contains(rec.Body.String(), "respuestas basicas") || !strings.Contains(rec.Body.String(), "Volvé a preguntar") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -701,7 +701,7 @@ func TestChatKnowledgeGapQueuesResearchJob(t *testing.T) {
 		},
 	})
 	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"what is MCP in agents?"}]}`, "secret")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "job_id=") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Volvé a preguntar") {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	jobs, err := store.ListResearchJobs(contextBackground(), 10)
@@ -766,7 +766,7 @@ func TestResearchableQuestionBypassesTrainedFactualExample(t *testing.T) {
 		},
 	})
 	rec := serveJSON(t, server, "/v1/chat/completions", `{"model":"aletheia-mikros","messages":[{"role":"user","content":"que fue la guerra de vietnam?"}]}`, "secret")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "job_id=") || strings.Contains(rec.Body.String(), "No debo inventar") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Volvé a preguntar") || strings.Contains(rec.Body.String(), "No debo inventar") {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
