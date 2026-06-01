@@ -349,6 +349,7 @@ func canonicalClaimAnswer(query string, text string) string {
 	best = trimBeforeCoreTerm(query, best)
 	best = stripLeadingChrome(best)
 	best = tidyProse(best)
+	best = balanceTrailingParens(best)
 	if len([]rune(best)) > 420 {
 		runes := []rune(best)
 		best = string(runes[:420])

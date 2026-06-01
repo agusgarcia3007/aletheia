@@ -59,6 +59,7 @@ func CanonicalAnswer(query string, evidence []string) (string, bool) {
 		}
 	}
 	best = trimDanglingTail(best)
+	best = balanceTrailingParens(best)
 	if best == "" {
 		return "", false
 	}
@@ -195,6 +196,20 @@ func trimDanglingTail(text string) string {
 			return text
 		}
 	}
+}
+
+// balanceTrailingParens drops a dangling, unclosed parenthetical that a
+// truncated source snippet leaves behind ("…parámetros (normalmente miles" ->
+// "…parámetros"). When there are more "(" than ")", everything from the last
+// unmatched "(" is cut, so the sentence reads complete instead of cut off.
+func balanceTrailingParens(text string) string {
+	if strings.Count(text, "(") <= strings.Count(text, ")") {
+		return text
+	}
+	if idx := strings.LastIndex(text, "("); idx >= 0 {
+		return strings.TrimRight(strings.TrimSpace(text[:idx]), " ,;:-")
+	}
+	return text
 }
 
 // requiredSynthesisOverlap scales the minimum query/sentence token overlap with
