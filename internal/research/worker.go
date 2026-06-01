@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -220,49 +219,21 @@ func (w Worker) storeSource(job memory.ResearchJob, id string, source RankedSour
 		})
 		offset += len([]rune(chunkText))
 	}
-	storedChunks, err := w.Store.ReplaceChunks(ctx, doc.ID, chunks)
-	if err != nil {
+	if _, err := w.Store.ReplaceChunks(ctx, doc.ID, chunks); err != nil {
 		return err
 	}
-	payload, _ := json.Marshal(stored)
-	sourceNode, err := w.Store.EnsureNode(ctx, "web_source", stored.ID, string(payload))
-	if err != nil {
-		return err
-	}
-	pagePayload, _ := json.Marshal(map[string]any{"document_id": doc.ID, "url": stored.FinalURL, "title": title})
-	pageNode, err := w.Store.EnsureNode(ctx, "web_page", stored.FinalURL, string(pagePayload))
-	if err != nil {
-		return err
-	}
-	if _, err := w.Store.EnsureEdge(ctx, pageNode, sourceNode, "derived_from", 1); err != nil {
-		return err
-	}
-	for _, chunk := range storedChunks {
-		chunkNode, err := w.Store.EnsureNode(ctx, "chunk", fmt.Sprintf("chunk:%d", chunk.ID), fmt.Sprintf(`{"chunk_id":%d,"document_id":%d}`, chunk.ID, doc.ID))
-		if err != nil {
-			return err
-		}
-		if _, err := w.Store.EnsureEdge(ctx, chunkNode, sourceNode, "derived_from", 1); err != nil {
-			return err
-		}
-	}
+	// Web evidence is recalled via SQL (WebSourcesByJob / WebClaimsByJob /
+	// retriever over chunks), never via the graph, so we don't write graph
+	// nodes/edges here — they were write-only. The learning graph
+	// (router/selector/trajectory nodes) is unaffected.
 	for _, claim := range source.Claims {
-		storedClaim, err := w.Store.RecordWebClaim(ctx, memory.WebClaim{
+		if _, err := w.Store.RecordWebClaim(ctx, memory.WebClaim{
 			ID:         claim.ID,
 			SourceID:   stored.ID,
 			Claim:      claim.Text,
 			Confidence: claim.Confidence,
 			CreatedAt:  claim.CreatedAt,
-		})
-		if err != nil {
-			return err
-		}
-		claimPayload, _ := json.Marshal(storedClaim)
-		claimNode, err := w.Store.EnsureNode(ctx, "web_claim", storedClaim.ID, string(claimPayload))
-		if err != nil {
-			return err
-		}
-		if _, err := w.Store.EnsureEdge(ctx, claimNode, sourceNode, "supported_by", storedClaim.Confidence); err != nil {
+		}); err != nil {
 			return err
 		}
 	}

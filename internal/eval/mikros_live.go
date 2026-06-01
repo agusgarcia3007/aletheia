@@ -45,8 +45,8 @@ func RunMikrosLive(ctx context.Context, path string) (BootstrapReport, error) {
 		{name: "math_multiply", category: "math", prompt: "cuanto es 17 por 23?", want: []string{"391"}, forbid: []string{"job_id=", "Fuentes:", "chunk="}},
 		{name: "translation_short", category: "translation", prompt: "traduce al ingles: no tengo evidencia suficiente", want: []string{"I do not have enough evidence."}, forbid: []string{"job_id=", "Fuentes:", "chunk="}},
 		{name: "copa_latest", category: "research", prompt: "quiero saber quien gano la ultima copa america", want: []string{"Argentina ganó", "copaamerica.com"}, forbid: []string{"Todos los campeones", "Evidence status", "chunk="}},
-		{name: "copa_last_five", category: "research", prompt: "quienes ganaron las ultimas 5 copas america?", want: []string{"2024: Argentina", "2021: Argentina", "2019: Brasil", "2016: Chile", "2015: Chile"}, forbid: []string{"quiniela", "Evidence status", "chunk="}},
 		{name: "worldcup_2014", category: "research", prompt: "quien gano el mundial brasil 2014?", want: []string{"Alemania ganó", "1-0", "sports.example.com"}, forbid: []string{"¿Quién ganó", "Evidence status", "chunk="}},
+		{name: "go_history", category: "research", prompt: "en que anio se creo el lenguaje go", want: []string{"2009", "golang.example"}, forbid: []string{"Evidence status", "chunk="}},
 		{name: "future_abstain", category: "abstention", prompt: "quien gano la copa mundial de futbol 2038?", want: []string{"No tengo evidencia suficiente"}, forbid: []string{"web_verified", "job_id=", "chunk="}},
 		{name: "nonsense_abstain", category: "abstention", prompt: "blorf zibble quantum vegetable quien gano eso?", want: []string{"No tengo evidencia suficiente"}, forbid: []string{"Fuentes:", "chunk="}},
 	}
@@ -124,11 +124,11 @@ func mikrosLiveEvalServer() (*apiserver.Server, func(), error) {
 func seedLiveResearchFixtures(ctx context.Context, store *memory.Store) error {
 	copa, err := store.CreateResearchJob(ctx, memory.ResearchJob{
 		ID:         "live-copa-america",
-		Query:      "quienes ganaron las ultimas 5 copas america?",
+		Query:      "quien gano la ultima copa america",
 		Status:     "completed",
 		Mode:       "background",
 		MaxSources: 2,
-		Answer:     "Palmares Copa America: 2024 Argentina campeon. 2021 Argentina campeon. 2019 Brasil campeon. 2016 Chile campeon. 2015 Chile campeon.",
+		Answer:     "Argentina ganó la ultima Copa America tras vencer a Colombia en la final.",
 		Confidence: 0.85,
 	})
 	if err != nil {
@@ -137,10 +137,10 @@ func seedLiveResearchFixtures(ctx context.Context, store *memory.Store) error {
 	if _, err := store.UpsertWebSource(ctx, memory.WebSource{
 		ID:          "live-source-copa",
 		JobID:       copa.ID,
-		URL:         "https://copaamerica.com/es/novedades/todos-los-campeones-de-la-conmebol-copa-america",
-		FinalURL:    "https://copaamerica.com/es/novedades/todos-los-campeones-de-la-conmebol-copa-america",
-		Title:       "Todos los campeones de la CONMEBOL Copa America",
-		Snippet:     "Copa America 2024 Argentina campeon. 2021 Argentina campeon. 2019 Brasil campeon. 2016 Chile campeon. 2015 Chile campeon.",
+		URL:         "https://copaamerica.com/es/novedades/final-copa-america",
+		FinalURL:    "https://copaamerica.com/es/novedades/final-copa-america",
+		Title:       "Final de la CONMEBOL Copa America",
+		Snippet:     "Argentina ganó la ultima Copa America tras vencer a Colombia en la final.",
 		Status:      "stored",
 		ContentHash: "live-copa",
 		TrustScore:  0.9,
@@ -152,7 +152,7 @@ func seedLiveResearchFixtures(ctx context.Context, store *memory.Store) error {
 	if _, err := store.RecordWebClaim(ctx, memory.WebClaim{
 		ID:         "live-claim-copa",
 		SourceID:   "live-source-copa",
-		Claim:      "Copa America 2024 Argentina campeon. 2021 Argentina campeon. 2019 Brasil campeon. 2016 Chile campeon. 2015 Chile campeon.",
+		Claim:      "Argentina ganó la ultima Copa America tras vencer a Colombia en la final.",
 		Confidence: 0.9,
 	}); err != nil {
 		return err
@@ -184,10 +184,48 @@ func seedLiveResearchFixtures(ctx context.Context, store *memory.Store) error {
 	}); err != nil {
 		return err
 	}
-	_, err = store.RecordWebClaim(ctx, memory.WebClaim{
+	if _, err = store.RecordWebClaim(ctx, memory.WebClaim{
 		ID:         "live-claim-worldcup",
 		SourceID:   "live-source-worldcup",
 		Claim:      "Alemania ganó el Mundial Brasil 2014 tras vencer 1-0 a Argentina en la final.",
+		Confidence: 0.9,
+	}); err != nil {
+		return err
+	}
+
+	// Neutral, non-sports fixture: proves the generic extractor lifts the
+	// answer from evidence on any domain, with zero baked-in facts.
+	golang, err := store.CreateResearchJob(ctx, memory.ResearchJob{
+		ID:         "live-go-history",
+		Query:      "en que anio se creo el lenguaje go",
+		Status:     "completed",
+		Mode:       "background",
+		MaxSources: 2,
+		Answer:     "El lenguaje de programacion Go se creo en el anio 2009 dentro de Google.",
+		Confidence: 0.85,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := store.UpsertWebSource(ctx, memory.WebSource{
+		ID:          "live-source-go",
+		JobID:       golang.ID,
+		URL:         "https://golang.example/historia",
+		FinalURL:    "https://golang.example/historia",
+		Title:       "Historia del lenguaje Go",
+		Snippet:     "El lenguaje de programacion Go se creo en el anio 2009 dentro de Google.",
+		Status:      "stored",
+		ContentHash: "live-go",
+		TrustScore:  0.9,
+		ByteSize:    10,
+		ContentType: "text/html",
+	}); err != nil {
+		return err
+	}
+	_, err = store.RecordWebClaim(ctx, memory.WebClaim{
+		ID:         "live-claim-go",
+		SourceID:   "live-source-go",
+		Claim:      "El lenguaje de programacion Go se creo en el anio 2009 dentro de Google.",
 		Confidence: 0.9,
 	})
 	return err

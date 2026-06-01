@@ -110,7 +110,6 @@ type ResearchConfig struct {
 	JobTimeoutSeconds     int      `yaml:"job_timeout_seconds"`
 	MinSourcesForVerified int      `yaml:"min_sources_for_verified"`
 	MinTrustScore         float64  `yaml:"min_trust_score"`
-	StoreRawHTML          bool     `yaml:"store_raw_html"`
 	UserAgent             string   `yaml:"user_agent"`
 	BlockedDomains        []string `yaml:"blocked_domains"`
 	AllowedDomains        []string `yaml:"allowed_domains"`

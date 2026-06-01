@@ -1194,7 +1194,6 @@ func researchOptionsFromConfig(cfg *config.Config) research.Options {
 		JobTimeout:            time.Duration(researchCfg.JobTimeoutSeconds) * time.Second,
 		MinSourcesForVerified: researchCfg.MinSourcesForVerified,
 		MinTrustScore:         researchCfg.MinTrustScore,
-		StoreRawHTML:          researchCfg.StoreRawHTML,
 		UserAgent:             researchCfg.UserAgent,
 		BlockedDomains:        researchCfg.BlockedDomains,
 		AllowedDomains:        researchCfg.AllowedDomains,

@@ -27,7 +27,6 @@ type Options struct {
 	JobTimeout            time.Duration
 	MinSourcesForVerified int
 	MinTrustScore         float64
-	StoreRawHTML          bool
 	UserAgent             string
 	BlockedDomains        []string
 	AllowedDomains        []string

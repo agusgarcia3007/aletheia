@@ -852,15 +852,18 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "prompt", "missing_prompt", "prompt is required")
 		return
 	}
-	generated, usage, err := s.generate(served, req.Prompt, generationOptions{
+	generated, usage, ok := s.safeGenerate(served, req.Prompt, generationOptions{
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
 	})
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "server_error", "", "generation_failed", err.Error())
-		return
+	if !ok {
+		// Honest abstention: an untrained/bootstrap checkpoint must never emit
+		// raw byte-model noise here either. This endpoint goes through the same
+		// generation guard as chat (principle #1: abstain over hallucinate).
+		generated = honestFallback
+		usage = map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":      s.id("cmpl"),

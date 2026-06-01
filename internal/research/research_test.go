@@ -194,7 +194,7 @@ func TestWorkerFutureOutcomeIsInsufficientEvidence(t *testing.T) {
 	}
 }
 
-func TestWorkerSynthesizesCopaAmericaLatestWinner(t *testing.T) {
+func TestWorkerExtractsSupportedAnswerFromEvidence(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.Open(filepath.Join(t.TempDir(), "memory.sqlite"))
 	if err != nil {
@@ -204,47 +204,49 @@ func TestWorkerSynthesizesCopaAmericaLatestWinner(t *testing.T) {
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	job, err := store.CreateResearchJob(ctx, memory.ResearchJob{Query: "quiero saber quien gano la ultima copa america", MaxSources: 1})
+	job, err := store.CreateResearchJob(ctx, memory.ResearchJob{Query: "quien gano la copa america 2024", MaxSources: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := FetchedPage{
-		URL:         "https://copaamerica.example/champions",
-		FinalURL:    "https://copaamerica.example/champions",
+		URL:         "https://copaamerica.example/final-2024",
+		FinalURL:    "https://copaamerica.example/final-2024",
 		StatusCode:  http.StatusOK,
 		ContentType: "text/html",
 		FetchedAt:   time.Now().UTC(),
-		Body: []byte(`<html><head><title>Todos los campeones de la Copa America</title></head><body>
-			<h1>Todos los campeones de la CONMEBOL Copa America</h1>
-			<p>2024 Argentina campeon. 2021 Argentina campeon. 2019 Brasil campeon. 2016 Chile campeon.</p>
+		Body: []byte(`<html><head><title>Final Copa America 2024</title></head><body>
+			<p>La Copa America 2024 la gano Argentina al vencer a Colombia en la final disputada en Miami.</p>
 		</body></html>`),
 	}
 	worker := NewWorker(store, Options{Enabled: true, MaxSources: 1, MinTrustScore: 0.1, JobTimeout: time.Second})
-	worker.Searcher = FakeSearchProvider{Results: []SearchResult{{Title: "Todos los campeones", URL: page.URL, Snippet: "Copa America 2024 Argentina campeon", Rank: 1}}}
+	worker.Searcher = FakeSearchProvider{Results: []SearchResult{{Title: "Final Copa America 2024", URL: page.URL, Snippet: "La Copa America 2024 la gano Argentina al vencer a Colombia en la final.", Rank: 1}}}
 	worker.Fetcher = FakeFetcher{Pages: map[string]FetchedPage{page.URL: page}}
 	result, err := worker.RunJob(ctx, job)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Answer, "Argentina ganó la Copa América 2024") {
+	// The answer must be lifted verbatim from the evidence, not synthesized
+	// from baked-in facts.
+	if !strings.Contains(result.Answer, "Argentina") || !strings.Contains(result.Answer, "Colombia") {
 		t.Fatalf("answer = %q", result.Answer)
 	}
 }
 
-func TestWorkerSynthesizesLastFiveCopaAmericaWinners(t *testing.T) {
-	answer, ok := CanonicalAnswer("quienes ganaron las ultimas 5 copas america?", []string{
-		"Palmares Copa America: 2024 Argentina campeon. 2021 Argentina campeon. 2019 Brasil campeon. 2016 Chile campeon. 2015 Chile campeon. 2011 Uruguay campeon.",
+func TestCanonicalAnswerPicksMostSupportedSentence(t *testing.T) {
+	answer, ok := CanonicalAnswer("quien gano la copa america 2024", []string{
+		"El torneo se jugo durante el verano en varias sedes de Estados Unidos.",
+		"La Copa America 2024 la gano Argentina tras vencer a Colombia en la final.",
 	})
-	if !ok || !strings.Contains(answer, "2024: Argentina") || !strings.Contains(answer, "2015: Chile") {
+	if !ok || !strings.Contains(answer, "Argentina") || !strings.Contains(answer, "Colombia") {
 		t.Fatalf("answer=%q ok=%v", answer, ok)
 	}
 }
 
-func TestWorkerSynthesizesWorldCup2014Winner(t *testing.T) {
-	answer, ok := CanonicalAnswer("quien gano el mundial brasil 2014?", []string{
-		"La final de la Copa Mundial de Futbol de 2014 se disputo entre Alemania y Argentina. Alemania vencio a Argentina por 1-0.",
-	})
-	if !ok || !strings.Contains(answer, "Alemania ganó el Mundial de Brasil 2014") {
-		t.Fatalf("answer=%q ok=%v", answer, ok)
+func TestCanonicalAnswerAbstainsWithoutSupport(t *testing.T) {
+	if answer, ok := CanonicalAnswer("quien gano la copa america 2024", []string{
+		"Las entradas para el proximo concierto ya estan a la venta.",
+		"El clima estuvo soleado durante toda la semana en la ciudad.",
+	}); ok {
+		t.Fatalf("expected abstention when evidence does not support the query, got %q", answer)
 	}
 }

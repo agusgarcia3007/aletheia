@@ -65,7 +65,6 @@ research:
   job_timeout_seconds: 120
   min_sources_for_verified: 2
   min_trust_score: 0.35
-  store_raw_html: false
   user_agent: "AletheiaResearchBot/0.1"
   blocked_domains:
     - "facebook.com"
