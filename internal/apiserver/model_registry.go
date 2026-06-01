@@ -25,36 +25,46 @@ type servedModel struct {
 	ChatExamples []trainedChatExample
 }
 
+// loadServedModel loads a checkpoint into a servedModel (runner + manifest +
+// chat examples). Shared by initial registry load and hot-swap.
+func loadServedModel(checkpoint, alias string, tok *tokenizer.Tokenizer) (*servedModel, error) {
+	loaded, manifest, err := model.Load(checkpoint, tok.VocabSize())
+	if err != nil {
+		return nil, fmt.Errorf("load checkpoint %s: %w", checkpoint, err)
+	}
+	id := manifest.Config.Name
+	if alias != "" {
+		id = alias
+	}
+	if id == "" {
+		return nil, fmt.Errorf("checkpoint %s has empty model name", checkpoint)
+	}
+	examples, err := loadTrainedChatExamples(checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("load chat examples for %s: %w", id, err)
+	}
+	return &servedModel{
+		ID:           id,
+		Checkpoint:   checkpoint,
+		Manifest:     manifest,
+		Runner:       runner.New(loaded, tok),
+		ChatExamples: examples,
+	}, nil
+}
+
 func loadModelRegistry(opts Options, tok *tokenizer.Tokenizer) (map[string]*servedModel, []string, string, error) {
 	models := map[string]*servedModel{}
 	var order []string
 	add := func(checkpoint string, alias string) error {
-		loaded, manifest, err := model.Load(checkpoint, tok.VocabSize())
+		sm, err := loadServedModel(checkpoint, alias, tok)
 		if err != nil {
-			return fmt.Errorf("load checkpoint %s: %w", checkpoint, err)
+			return err
 		}
-		id := manifest.Config.Name
-		if alias != "" {
-			id = alias
+		if _, ok := models[sm.ID]; ok {
+			return fmt.Errorf("duplicate served model %q", sm.ID)
 		}
-		if id == "" {
-			return fmt.Errorf("checkpoint %s has empty model name", checkpoint)
-		}
-		if _, ok := models[id]; ok {
-			return fmt.Errorf("duplicate served model %q", id)
-		}
-		examples, err := loadTrainedChatExamples(checkpoint)
-		if err != nil {
-			return fmt.Errorf("load chat examples for %s: %w", id, err)
-		}
-		models[id] = &servedModel{
-			ID:           id,
-			Checkpoint:   checkpoint,
-			Manifest:     manifest,
-			Runner:       runner.New(loaded, tok),
-			ChatExamples: examples,
-		}
-		order = append(order, id)
+		models[sm.ID] = sm
+		order = append(order, sm.ID)
 		return nil
 	}
 
@@ -103,8 +113,36 @@ func loadModelRegistry(opts Options, tok *tokenizer.Tokenizer) (map[string]*serv
 }
 
 func (s *Server) model(id string) (*servedModel, bool) {
+	s.modelsMu.RLock()
+	defer s.modelsMu.RUnlock()
 	m, ok := s.models[id]
 	return m, ok
+}
+
+// swapModel hot-loads a checkpoint and replaces the served model under the given
+// alias, with no restart. Used to serve a freshly trained checkpoint the instant
+// the admin pipeline finishes (and at boot to prefer a persisted trained model).
+func (s *Server) swapModel(alias, checkpoint string) error {
+	sm, err := loadServedModel(checkpoint, alias, s.tokenizer)
+	if err != nil {
+		return err
+	}
+	s.modelsMu.Lock()
+	s.models[alias] = sm
+	if _, seen := indexOf(s.modelOrder, alias); !seen {
+		s.modelOrder = append(s.modelOrder, alias)
+	}
+	s.modelsMu.Unlock()
+	return nil
+}
+
+func indexOf(xs []string, target string) (int, bool) {
+	for i, x := range xs {
+		if x == target {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 func (s *Server) routeModel(requested string, messages []chatMessage, tools []chatTool) (*servedModel, bool, error) {
@@ -125,6 +163,8 @@ func (s *Server) routeModel(requested string, messages []chatMessage, tools []ch
 }
 
 func (s *Server) publicModelOrder() []string {
+	s.modelsMu.RLock()
+	defer s.modelsMu.RUnlock()
 	if _, ok := s.models[mikrosModelName]; ok {
 		return []string{mikrosModelName}
 	}

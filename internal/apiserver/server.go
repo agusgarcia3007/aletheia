@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -72,6 +73,7 @@ type Server struct {
 	queued       atomic.Uint64
 	experts      map[string]*atomic.Uint64
 	adminState   *adminPipeline
+	modelsMu     sync.RWMutex // guards models/modelOrder for hot-swap
 }
 
 // expertNames are the sparse capability "experts": exactly one handles each chat
@@ -168,7 +170,33 @@ func New(opts Options) (*Server, error) {
 	} else {
 		s.answerers = answerer.Default()
 	}
+	// Prefer a persisted self-trained checkpoint over the baked base, so a model
+	// trained by the admin pipeline is served after a restart/redeploy.
+	s.preferTrainedCheckpoint()
 	return s, nil
+}
+
+// trainedCheckpointDir is where the admin pipeline writes the self-trained
+// model, under the persistent data dir.
+func (s *Server) trainedCheckpointDir() string {
+	dataDir := strings.TrimSpace(s.opts.DataDir)
+	if dataDir == "" {
+		return ""
+	}
+	return filepath.Join(dataDir, "checkpoints", "aletheia-mikros-gen")
+}
+
+// preferTrainedCheckpoint swaps in a persisted self-trained checkpoint at boot
+// when one exists. Non-fatal: on any error it keeps serving the base model.
+func (s *Server) preferTrainedCheckpoint() {
+	checkpoint := s.trainedCheckpointDir()
+	if checkpoint == "" {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(checkpoint, manifestFile)); err != nil {
+		return
+	}
+	_ = s.swapModel(mikrosModelName, checkpoint)
 }
 
 func loadChatRouter(opts Options) (router.Router, error) {
@@ -274,7 +302,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"model_loaded":       true,
 		"model":              s.defaultModel,
 		"models":             s.publicModelOrder(),
-		"models_loaded":      len(s.models),
+		"models_loaded":      s.modelsLoaded(),
 		"context_length":     s.defaultContextLength(),
 		"max_output_tokens":  DefaultMaxOutputTokens,
 		"supports_tools":     true,
@@ -299,7 +327,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":             "ready",
 		"model_loaded":       true,
-		"models_loaded":      len(s.models),
+		"models_loaded":      s.modelsLoaded(),
 		"memory_configured":  s.store != nil,
 		"research_enabled":   s.research.Enabled,
 		"context_length":     s.defaultContextLength(),
@@ -349,10 +377,16 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) defaultContextLength() int {
-	if model, ok := s.models[s.defaultModel]; ok {
+	if model, ok := s.model(s.defaultModel); ok {
 		return model.Manifest.Config.ContextLength
 	}
 	return 0
+}
+
+func (s *Server) modelsLoaded() int {
+	s.modelsMu.RLock()
+	defer s.modelsMu.RUnlock()
+	return len(s.models)
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {

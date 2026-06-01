@@ -246,7 +246,15 @@ func (s *Server) runAdminPipeline(req adminPipelineRequest) {
 	p.mu.Lock()
 	p.report = &report
 	p.mu.Unlock()
-	finish("done", "pipeline complete — point serve at the new checkpoint to use it", "")
+
+	// Hot-swap: serve the freshly trained checkpoint immediately, no restart.
+	// Generation stays gated by safeGenerate, so a still-weak model falls back to
+	// extractive/abstention rather than emitting noise.
+	if err := s.swapModel(mikrosModelName, report.CheckpointPath); err != nil {
+		finish("done", "trained, but hot-swap failed ("+err.Error()+"); restart to load it", "")
+		return
+	}
+	finish("done", "pipeline complete — the self-trained model is now serving", "")
 }
 
 func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
