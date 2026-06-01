@@ -326,6 +326,7 @@ func researchEvidenceTexts(report ResearchResult) []string {
 func canonicalClaimAnswer(query string, text string) string {
 	text = cleanExtractedSentence(text)
 	queryTokens := keywordSet(query)
+	isDef := looksLikeDefinitionQuery(query)
 	best := ""
 	bestScore := 0.0
 	for _, sentence := range splitSentences(text) {
@@ -334,6 +335,9 @@ func canonicalClaimAnswer(query string, text string) string {
 			continue
 		}
 		score := overlapScore(queryTokens, keywordSet(sentence))
+		if score > 0 {
+			score += definitionBonus(isDef, sentence)
+		}
 		if score > bestScore {
 			best = sentence
 			bestScore = score

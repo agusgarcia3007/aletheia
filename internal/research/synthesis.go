@@ -18,6 +18,7 @@ func CanonicalAnswer(query string, evidence []string) (string, bool) {
 	}
 	threshold := requiredSynthesisOverlap(len(queryTokens))
 
+	isDef := looksLikeDefinitionQuery(query)
 	best := ""
 	bestScore := 0.0
 	for _, raw := range evidence {
@@ -29,6 +30,11 @@ func CanonicalAnswer(query string, evidence []string) (string, bool) {
 				continue
 			}
 			score := overlapScore(queryTokens, keywordSet(sentence))
+			// For "what is X" questions, prefer a sentence that actually defines
+			// the subject ("X es …") over a tangential one with similar overlap.
+			if score > 0 {
+				score += definitionBonus(isDef, sentence)
+			}
 			if score > bestScore {
 				best = sentence
 				bestScore = score
@@ -56,6 +62,47 @@ func CanonicalAnswer(query string, evidence []string) (string, bool) {
 		best += "."
 	}
 	return strings.TrimSpace(best), true
+}
+
+// definitionConnectives are the verb phrases a real definition uses ("X es …",
+// "X is …"). They are grammar, not domain facts.
+var definitionConnectives = []string{
+	" es ", " es un", " es una", " es el", " es la", " son ", " son un", " son las", " son los",
+	" se define", " se denomina", " se conoce", " consiste en", " se refiere",
+	" is ", " are ", " is a", " is an", " is the", " refers to",
+}
+
+// looksLikeDefinitionQuery reports whether the user is asking what something is
+// (vs. a how-to or a specific detail), so synthesis can prefer a defining
+// sentence over a tangential one.
+func looksLikeDefinitionQuery(query string) bool {
+	n := strings.ToLower(query)
+	for _, m := range []string{
+		"que es", "qué es", "que son", "qué son", "what is", "what are",
+		"explica", "definicion", "definición", "que significa", "qué significa",
+		"hablame de", "háblame de", "contame", "contanos", "que es un", "que es una",
+	} {
+		if strings.Contains(n, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// definitionBonus rewards a sentence that carries a definitional connective when
+// the question asks for a definition. The caller only applies it to sentences
+// that already mention the subject, so it tips phrasing, not topic.
+func definitionBonus(isDefinitionQuery bool, sentence string) float64 {
+	if !isDefinitionQuery {
+		return 0
+	}
+	low := " " + strings.ToLower(sentence) + " "
+	for _, c := range definitionConnectives {
+		if strings.Contains(low, c) {
+			return 0.5
+		}
+	}
+	return 0
 }
 
 // tidyProse repairs the cosmetic damage HTML extraction leaves behind: stray

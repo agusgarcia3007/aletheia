@@ -241,6 +241,21 @@ func TestCanonicalAnswerPicksMostSupportedSentence(t *testing.T) {
 	}
 }
 
+// A "what is X" question should be answered with the defining sentence, not a
+// tangential one that merely shares keywords (the "solo escupe links" feel).
+func TestCanonicalAnswerPrefersDefinitionForWhatIsQuery(t *testing.T) {
+	answer, ok := CanonicalAnswer("que es una derivada", []string{
+		"En la practica existen formulas precalculadas para las derivadas de las funciones mas simples y reglas para reducir el problema.",
+		"La derivada de una funcion es la razon de cambio instantanea con la que varia el valor de dicha funcion.",
+	})
+	if !ok {
+		t.Fatal("expected an answer, got abstain")
+	}
+	if !strings.Contains(answer, "razon de cambio") {
+		t.Fatalf("did not pick the defining sentence: %q", answer)
+	}
+}
+
 func TestCanonicalAnswerCleansTruncatedProse(t *testing.T) {
 	answer, ok := CanonicalAnswer("que es la fotosintesis", []string{
 		"La fotosintesis es un proceso quimico que convierte materia inorganica en materia organica gracias a la energia que ...",
