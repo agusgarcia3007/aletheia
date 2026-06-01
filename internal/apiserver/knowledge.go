@@ -42,11 +42,11 @@ func (s *Server) indexKnowledge(path string) error {
 // asks for the missing detail. This is how knowledge grows without code edits.
 func (s *Server) codingKnowledgeOrLearn(ctx context.Context, query string) (string, string, bool) {
 
-	if answer, ok := s.completedResearchAnswer(ctx, query); ok {
+	if answer, ok := s.completedResearchAnswer(ctx, query); ok && codingAnswerLanguageConsistent(query, answer) {
 		return verifyLearnedCoding(query, answer), "", true
 	}
 
-	if answer, citation, ok := s.codingRetrieval(ctx, query); ok {
+	if answer, citation, ok := s.codingRetrieval(ctx, query); ok && codingAnswerLanguageConsistent(query, answer) {
 		return answer, citation, true
 	}
 
@@ -60,6 +60,30 @@ func (s *Server) codingKnowledgeOrLearn(ctx context.Context, query string) (stri
 		return "", "", false
 	}
 	return "No conozco eso todavía, así que lo estoy aprendiendo ahora. Volvé a preguntar en unos segundos y te respondo con lo aprendido y su fuente.", "", true
+}
+
+// codingAnswerLanguageConsistent rejects a retrieved/learned coding answer that
+// is about a different programming language than the one the question asked for
+// — e.g. a Go question must not be answered with a Rust snippet just because the
+// distinctive token ("go") was too short to survive overlap matching. When the
+// query names no language, or the answer names none, any answer is allowed.
+func codingAnswerLanguageConsistent(query, answer string) bool {
+	queryLangs := detectCodingLanguages(normalizeBasicChat(query))
+	if len(queryLangs) == 0 {
+		return true
+	}
+	answerLangs := detectCodingLanguages(normalizeBasicChat(answer))
+	if len(answerLangs) == 0 {
+		return true
+	}
+	for _, q := range queryLangs {
+		for _, a := range answerLangs {
+			if q.Name == a.Name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // matchingLearningJob reports a non-failed job whose query overlaps this one, so

@@ -97,6 +97,8 @@ func (SmalltalkAnswerer) Answer(_ context.Context, req Request) (Response, error
 		content = "De nada. Puedo seguir con codigo, pruebas, research con evidencia o comandos de Aletheia."
 	case hasAny(text, "chau", "adios", "bye"):
 		content = "Chau. Cuando vuelvas, puedo ayudarte con tareas verificables y respuestas con evidencia."
+	case hasAny(text, "que lenguajes", "cuales lenguajes", "que lenguaje de", "what languages", "which languages", "lenguajes de codigo", "lenguajes de programacion", "lenguajes soportas", "lenguajes manejas", "lenguajes sabes"):
+		content = "Manejo con solidez Python, JavaScript/TypeScript, Go, Rust, SQL y React. Pedime un ejemplo concreto en cualquiera de esos (por ejemplo: \"una función en Go\" o \"leer un CSV en Python\")."
 	case hasAny(text, "que puedes hacer", "que podes hacer", "que sabes hacer", "help", "ayuda"):
 		content = "Puedo conversar de forma básica y hacer cinco cosas bien: responder codigo pequeño, usar tools de agente, calcular operaciones simples, traducir frases cortas y contestar hechos sólo con evidencia o research."
 	case hasAny(text, "quien sos", "quien eres", "what are you", "who are you"):
@@ -257,7 +259,11 @@ func (c CodingAnswerer) Answer(ctx context.Context, req Request) (Response, erro
 		return Response{Content: content, Intent: req.Intent, Reason: "verified worked example"}, nil
 	}
 
-	if slots.Task == "intro" {
+	// A language intro or a basic function in a supported language is a
+	// universally-known, type-checkable construct — answer it directly with the
+	// minimal verified example instead of falling through to web retrieval (which
+	// can surface a snippet from the wrong language).
+	if slots.Task == "intro" || slots.Task == "function" {
 		return Response{Content: genericCodingResponse(slots), Intent: req.Intent, Reason: "language overview"}, nil
 	}
 

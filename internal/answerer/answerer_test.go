@@ -93,3 +93,29 @@ func TestCodingAnswererAsksForConstraintsWhenLanguageMissing(t *testing.T) {
 		t.Fatalf("content = %s", resp.Content)
 	}
 }
+
+// A basic "function in <language>" request must be answered directly with the
+// minimal example for that exact language — never routed to web retrieval (which
+// used to surface a Rust snippet for a Go or Python question).
+func TestCodingAnswererAnswersBasicFunctionPerLanguage(t *testing.T) {
+	cases := []struct {
+		query string
+		want  string
+	}{
+		{"mostrame el codigo de una funcion en rust", "fn add"},
+		{"como hago una funcion en go", "func Add"},
+		{"dame una funcion en python", "def add"},
+	}
+	for _, tc := range cases {
+		resp, err := (CodingAnswerer{}).Answer(context.Background(), Request{Query: tc.query, Intent: router.IntentCodingHelp})
+		if err != nil {
+			t.Fatalf("%q: %v", tc.query, err)
+		}
+		if !strings.Contains(resp.Content, tc.want) {
+			t.Fatalf("%q: content = %q, want substring %q", tc.query, resp.Content, tc.want)
+		}
+		if strings.Contains(resp.Content, "Volvé a preguntar") || strings.Contains(resp.Content, "Fuentes:") {
+			t.Fatalf("%q routed to research instead of answering: %q", tc.query, resp.Content)
+		}
+	}
+}
