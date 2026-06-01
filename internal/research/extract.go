@@ -10,15 +10,24 @@ import (
 type SimpleHTMLExtractor struct{}
 
 var (
-	titleRe       = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
-	tagRe         = regexp.MustCompile(`(?is)<[^>]+>`)
-	spaceRe       = regexp.MustCompile(`\s+`)
+	titleRe = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	tagRe   = regexp.MustCompile(`(?is)<[^>]+>`)
+	spaceRe = regexp.MustCompile(`\s+`)
+	// blockBreakRe marks the end of a block-level element (and <br>) so document
+	// structure survives as newlines instead of being flattened into one run.
+	blockBreakRe = regexp.MustCompile(`(?is)</(p|div|section|article|h[1-6]|li|ul|ol|tr|table|thead|tbody|blockquote|pre|dd|dt|figcaption)>|<br\s*/?>`)
+	// inlineSpaceRe collapses runs of whitespace that are NOT newlines, so spaces
+	// within a line shrink to one while paragraph/line breaks are preserved.
+	inlineSpaceRe = regexp.MustCompile(`[^\S\n]+`)
+	blankRunRe    = regexp.MustCompile(`\n{2,}`)
 	noiseBlockRes = []*regexp.Regexp{
 		regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`),
 		regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`),
 		regexp.MustCompile(`(?is)<nav[^>]*>.*?</nav>`),
 		regexp.MustCompile(`(?is)<footer[^>]*>.*?</footer>`),
 		regexp.MustCompile(`(?is)<header[^>]*>.*?</header>`),
+		regexp.MustCompile(`(?is)<aside[^>]*>.*?</aside>`),
+		regexp.MustCompile(`(?is)<form[^>]*>.*?</form>`),
 		regexp.MustCompile(`(?is)<noscript[^>]*>.*?</noscript>`),
 		regexp.MustCompile(`(?is)<svg[^>]*>.*?</svg>`),
 	}
@@ -34,20 +43,36 @@ func (SimpleHTMLExtractor) Extract(_ context.Context, page FetchedPage) (Extract
 	for _, re := range noiseBlockRes {
 		text = re.ReplaceAllString(text, " ")
 	}
-	text = strings.ReplaceAll(text, "</h1>", "\n")
-	text = strings.ReplaceAll(text, "</h2>", "\n")
-	text = strings.ReplaceAll(text, "</h3>", "\n")
-	text = strings.ReplaceAll(text, "</p>", "\n")
-	text = strings.ReplaceAll(text, "</li>", "\n")
+	// Turn block boundaries into newlines BEFORE stripping inline tags, so
+	// paragraphs/headings/list items stay separated (markdown-ish structure).
+	text = blockBreakRe.ReplaceAllString(text, "\n")
 	text = tagRe.ReplaceAllString(text, " ")
-	text = normalizeText(text)
+	text = normalizeStructuredText(text)
 	return ExtractedDocument{Title: title, Text: text}, nil
 }
 
+// normalizeText flattens to a single clean line \u2014 used for titles.
 func normalizeText(text string) string {
 	text = html.UnescapeString(text)
 	text = strings.ReplaceAll(text, "\u00a0", " ")
 	text = spaceRe.ReplaceAllString(text, " ")
+	return strings.TrimSpace(text)
+}
+
+// normalizeStructuredText cleans whitespace WITHIN lines but preserves the line
+// breaks that carry document structure, so downstream sentence splitting sees
+// real paragraphs and headings instead of one giant run-on.
+func normalizeStructuredText(text string) string {
+	text = html.UnescapeString(text)
+	text = strings.ReplaceAll(text, "\u00a0", " ")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	text = inlineSpaceRe.ReplaceAllString(text, " ")
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+	text = strings.Join(lines, "\n")
+	text = blankRunRe.ReplaceAllString(text, "\n\n")
 	return strings.TrimSpace(text)
 }
 

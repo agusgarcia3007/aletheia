@@ -1329,7 +1329,9 @@ func publicResearchEvidenceTexts(job memory.ResearchJob, sources []memory.WebSou
 		if !publicWebSourceAllowed(source) {
 			continue
 		}
-		texts = append(texts, source.Title, source.Snippet)
+		// Skip the truncated search snippet; the stored claims carry full,
+		// un-cut sentences from the page.
+		texts = append(texts, source.Title)
 	}
 	for _, claim := range claims {
 		texts = append(texts, claim.Claim)

@@ -280,7 +280,7 @@ func answerFromSources(query string, report ResearchResult) string {
 		if sourceTitle == "" {
 			sourceTitle = strings.TrimSpace(source.Title)
 		}
-		if candidate := canonicalClaimAnswer(query, source.Snippet); candidate != "" && !likelyTitle(candidate) {
+		if candidate := canonicalClaimAnswer(query, source.Extracted.Text); candidate != "" && !likelyTitle(candidate) {
 			score := int(overlapScore(queryTokens, keywordSet(candidate)) * 100)
 			if score > bestScore {
 				best = candidate
@@ -315,7 +315,9 @@ func researchEvidenceTexts(report ResearchResult) []string {
 		if source.Status != "stored" {
 			continue
 		}
-		texts = append(texts, source.Title, source.Snippet, source.Extracted.Title, source.Extracted.Text)
+		// The search snippet is truncated ("…"); rely on the full extracted text
+		// and claims so synthesis never serves a cut-off sentence.
+		texts = append(texts, source.Title, source.Extracted.Title, source.Extracted.Text)
 		for _, claim := range source.Claims {
 			texts = append(texts, claim.Text)
 		}
@@ -407,7 +409,7 @@ func isCaptionLead(text string) bool {
 // (quotes, ">", "|", bullets) so page chrome glued onto a run-on snippet — an
 // author byline, a publication date, a "Foo: Diferencias…" header — lands in
 // its own low-overlap fragment and loses to the real answer fragment.
-var sentenceSplitRe = regexp.MustCompile(`[.!?:]\s+|["|•›»·>]`)
+var sentenceSplitRe = regexp.MustCompile(`[.!?:]\s+|\n+|["|•›»·>]`)
 
 func splitSentences(text string) []string {
 	parts := sentenceSplitRe.Split(text, -1)
