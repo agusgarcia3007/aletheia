@@ -997,7 +997,8 @@ func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	configPath := fs.String("config", "", "configuration YAML path")
-	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	dbPath := fs.String("db", envDefault("ALETHEIA_DB", memory.DefaultDBPath), "SQLite memory database path")
+	dataDir := fs.String("data-dir", os.Getenv("ALETHEIA_DATA_DIR"), "writable+persistent data dir for DB, harvested datasets and trained checkpoints")
 	addr := fs.String("addr", envDefault("ALETHEIA_ADDR", apiserver.DefaultAddr), "HTTP listen address")
 	checkpoint := fs.String("checkpoint", envDefault("ALETHEIA_CHECKPOINT", apiserver.DefaultCheckpoint), "model checkpoint directory")
 	checkpointsDir := fs.String("checkpoints-dir", os.Getenv("ALETHEIA_CHECKPOINTS_DIR"), "directory containing model checkpoint subdirectories")
@@ -1017,6 +1018,16 @@ func runServe(args []string) error {
 	}
 	if cfg != nil && !flagWasSet(fs, "db") {
 		*dbPath = cfg.Project.MemoryDB
+	}
+	// A persistent data dir (mounted volume) centralizes the DB, harvested
+	// datasets and trained checkpoints so nothing is lost on redeploy.
+	if strings.TrimSpace(*dataDir) != "" {
+		if err := os.MkdirAll(*dataDir, 0o755); err != nil {
+			return fmt.Errorf("create data dir: %w", err)
+		}
+		if cfg == nil && !flagWasSet(fs, "db") && os.Getenv("ALETHEIA_DB") == "" {
+			*dbPath = filepath.Join(*dataDir, "memory.sqlite")
+		}
 	}
 	store, err := memory.Open(*dbPath)
 	if err != nil {
@@ -1039,6 +1050,7 @@ func runServe(args []string) error {
 		RouterCheckpoint: *routerCheckpoint,
 		KnowledgePath:    *knowledgePath,
 		AdminToken:       *adminToken,
+		DataDir:          *dataDir,
 	})
 	if err != nil {
 		return err

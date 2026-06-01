@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -125,14 +126,18 @@ func (s *Server) handleAdminPipeline(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Default outputs under ./data — the mounted volume is writable AND
-	// persistent, unlike checkpoints/ and datasets/ which ship in the (read-only)
-	// image layer.
+	// Default outputs under the persistent data dir (a mounted volume), writable
+	// AND surviving redeploys — unlike checkpoints/ and datasets/ which ship in
+	// the read-only image layer.
+	dataDir := strings.TrimSpace(s.opts.DataDir)
+	if dataDir == "" {
+		dataDir = "data"
+	}
 	if req.Dataset == "" {
-		req.Dataset = "data/generated/mikros_chat_harvested.jsonl"
+		req.Dataset = filepath.Join(dataDir, "generated", "mikros_chat_harvested.jsonl")
 	}
 	if req.Out == "" {
-		req.Out = "data/checkpoints/aletheia-mikros-gen"
+		req.Out = filepath.Join(dataDir, "checkpoints", "aletheia-mikros-gen")
 	}
 	if req.MinConfidence <= 0 {
 		req.MinConfidence = 0.5

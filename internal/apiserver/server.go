@@ -48,6 +48,10 @@ type Options struct {
 	// that drive the self-improvement pipeline (seed -> harvest -> train) over
 	// HTTP, for VPS deployments without easy shell access. Empty = disabled.
 	AdminToken string
+	// DataDir is the writable+persistent directory (a mounted volume) where the
+	// admin pipeline writes harvested datasets and trained checkpoints, so they
+	// survive redeploys. Empty falls back to a relative "data" dir.
+	DataDir string
 }
 
 type Server struct {
