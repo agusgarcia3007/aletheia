@@ -1052,6 +1052,9 @@ func effectiveUserQuery(messages []chatMessage) string {
 	}
 
 	last = unwrapPackedUserMessage(last)
+	// Composed "greeting + question" ("Hola! ¿qué es un LLM?"): route on the
+	// question clause so the greeting doesn't swallow it.
+	last = substantiveQueryClause(last)
 	if !isContextualFollowup(last) {
 		return last
 	}
@@ -1060,6 +1063,41 @@ func effectiveUserQuery(messages []chatMessage) string {
 		return last
 	}
 	return strings.TrimSpace(previous + " " + last)
+}
+
+// substantiveQueryClause handles composed messages like "Hola! ¿qué es un LLM?":
+// it splits the text on sentence boundaries (structural punctuation only — no
+// greeting word-list, no regex) and, when one clause is a real question by the
+// existing routing predicates, routes on that clause so a leading greeting can't
+// swallow the actual question. A single-clause message is returned unchanged.
+func substantiveQueryClause(query string) string {
+	clauses := strings.FieldsFunc(query, func(r rune) bool {
+		switch r {
+		case '.', '!', '?', '¡', '¿', '\n':
+			return true
+		}
+		return false
+	})
+	if len(clauses) < 2 {
+		return query
+	}
+	best := ""
+	for _, clause := range clauses {
+		clause = strings.TrimSpace(clause)
+		if clause == "" {
+			continue
+		}
+		if isResearchableQuestion(clause) || isFactualKnowledgeQuestion(clause) ||
+			looksLikeMath(clause) || isCodingKnowledgeQuery(clause) {
+			if len(clause) > len(best) {
+				best = clause
+			}
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return query
 }
 
 // unwrapPackedUserMessage extracts the real question from a context-packed user
