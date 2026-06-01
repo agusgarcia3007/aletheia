@@ -60,6 +60,9 @@ func lowQualityHost(host string) bool {
 	low := []string{
 		"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com",
 		"reddit.com", "turiver.com",
+		// Video/social pages have no article text — their HTML is mostly nav
+		// chrome that pollutes synthesis.
+		"youtube.com", "youtu.be", "m.youtube.com", "pinterest.com", "threads.net",
 	}
 	for _, domain := range low {
 		if host == domain || strings.HasSuffix(host, "."+domain) {

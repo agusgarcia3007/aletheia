@@ -20,3 +20,15 @@ func TestSubstantiveQueryClauseRoutesOnTheQuestion(t *testing.T) {
 		t.Fatalf("greeting+smalltalk changed: %q", got)
 	}
 }
+
+func TestEffectiveQueryInheritsTopicOnSubjectlessFollowup(t *testing.T) {
+	msgs := []chatMessage{
+		{Role: "user", Content: "Hola! que es un LLM?"},
+		{Role: "assistant", Content: "Un LLM es..."},
+		{Role: "user", Content: "y como funciona?"},
+	}
+	got := effectiveUserQuery(msgs)
+	if got != "que es un LLM y como funciona?" {
+		t.Fatalf("got %q", got)
+	}
+}

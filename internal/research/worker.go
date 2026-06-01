@@ -42,7 +42,7 @@ func NewWorker(store *memory.Store, opts Options) Worker {
 		opts.UserAgent = "AletheiaResearchBot/0.1"
 	}
 	if len(opts.BlockedDomains) == 0 {
-		opts.BlockedDomains = []string{"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com", "reddit.com"}
+		opts.BlockedDomains = []string{"facebook.com", "instagram.com", "tiktok.com", "x.com", "twitter.com", "reddit.com", "youtube.com", "youtu.be", "m.youtube.com", "pinterest.com", "threads.net"}
 	}
 	return Worker{
 		Store: store,

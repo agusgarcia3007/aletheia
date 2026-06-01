@@ -3,6 +3,7 @@ package research
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // CanonicalAnswer turns retrieved evidence into a direct answer by selecting the
@@ -83,17 +84,35 @@ var definitionConnectives = []string{
 // Such text is never a real answer, so synthesis skips it (and harvest must not
 // store it as a training target). Generic structure, not domain facts.
 func looksLikeStructuredDump(text string) bool {
-	fields := strings.Fields(strings.ToLower(text))
-	if len(fields) < 4 {
+	words := strings.Fields(text)
+	if len(words) < 4 {
 		return false
 	}
 	dups := 0
-	for i := 1; i < len(fields); i++ {
-		if fields[i] == fields[i-1] && len([]rune(fields[i])) >= 3 {
+	for i := 1; i < len(words); i++ {
+		if strings.EqualFold(words[i], words[i-1]) && len([]rune(words[i])) >= 3 {
 			dups++
 		}
 	}
-	return dups >= 2
+	if dups >= 2 {
+		return true
+	}
+	// Navigation/menu dump: a long run dominated by Title-Case items (menu
+	// labels, breadcrumbs) rather than prose. Real sentences are mostly
+	// lowercase; nav menus are mostly capitalized.
+	if len(words) >= 8 {
+		caps := 0
+		for _, w := range words {
+			r := []rune(w)
+			if len(r) > 0 && unicode.IsUpper(r[0]) {
+				caps++
+			}
+		}
+		if float64(caps)/float64(len(words)) >= 0.45 {
+			return true
+		}
+	}
+	return false
 }
 
 // looksLikeDefinitionQuery reports whether the user is asking what something is

@@ -1062,6 +1062,9 @@ func effectiveUserQuery(messages []chatMessage) string {
 	if previous == "" {
 		return last
 	}
+	// Inherit the previous turn's topic (its substantive clause), so "y cómo
+	// funciona?" after "¿qué es un LLM?" researches "que es un LLM y como funciona".
+	previous = substantiveQueryClause(unwrapPackedUserMessage(previous))
 	return strings.TrimSpace(previous + " " + last)
 }
 
@@ -1828,15 +1831,43 @@ func isCodingKnowledgeQuery(query string) bool {
 		"como", "ejemplo", "funcion", "function", "loop", "for", "clase", "class", "metodo", "method")
 }
 
+// followupVerbs are subject-less question verbs ("¿y cómo funciona?") — when a
+// short query carries only these (no topic noun), it refers to the previous
+// turn's topic. Linguistic helpers, not domain facts.
+var followupVerbs = map[string]bool{
+	"funciona": true, "funcionan": true, "sirve": true, "sirven": true,
+	"hace": true, "hacen": true, "anda": true, "opera": true, "trabaja": true,
+	"significa": true, "consiste": true, "pasa": true,
+}
+
 func isContextualFollowup(query string) bool {
 	normalized := normalizeBasicChat(query)
 	if normalized == "" {
 		return false
 	}
-	return hasAny(normalized,
+	if hasAny(normalized,
 		"pero dime", "pero decime", "dime los", "decime los", "y los", "y las",
 		"resultados de", "ultimas 5", "ultimos 5", "las ultimas", "los ultimos",
-	)
+	) {
+		return true
+	}
+	// Subject-less follow-up: a short query whose only meaningful tokens are
+	// generic question verbs (no topic of its own) inherits the previous topic —
+	// e.g. "y cómo funciona?", "para qué sirve?".
+	words := strings.Fields(normalized)
+	if len(words) == 0 || len(words) > 6 {
+		return false
+	}
+	tokens := meaningfulChatTokens(query)
+	if len(tokens) == 0 {
+		return false
+	}
+	for tok := range tokens {
+		if !followupVerbs[tok] {
+			return false
+		}
+	}
+	return true
 }
 
 func isAmbiguousFollowup(query string) bool {
