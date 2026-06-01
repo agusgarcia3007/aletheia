@@ -127,9 +127,12 @@ func Default() Config {
 			MemoryDB:      "./data/memory.sqlite",
 		},
 		Model: ModelConfig{
-			Name:          "aletheia-mikros",
+			Name: "aletheia-mikros",
+			// Byte tokenizer: Spanish accents/ñ are 2 bytes each, so grounded
+			// answers run long. 1024 fits the synthesis-capped (~420 rune) answers
+			// plus the prompt without rejecting examples at load time.
 			VocabSize:     512,
-			ContextLength: 256,
+			ContextLength: 1024,
 			NLayers:       1,
 			NHeads:        4,
 			DModel:        64,
@@ -149,7 +152,7 @@ func Default() Config {
 			CheckpointEvery: 100,
 			EvalEvery:       25,
 		},
-		Inference: InferenceConfig{Temperature: 0, TopK: 8, TopP: 1.0, MaxTokens: 96},
+		Inference: InferenceConfig{Temperature: 0, TopK: 8, TopP: 1.0, MaxTokens: 256},
 	}
 	cfg.ApplyDefaults()
 	return cfg

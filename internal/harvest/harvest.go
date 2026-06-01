@@ -18,6 +18,11 @@ type chatTrainingExample struct {
 	Completion string `json:"completion"`
 }
 
+// maxPairBytes caps the byte length of a (prompt+completion) pair so it fits the
+// default training context (1024 byte-tokens) with margin. A pathologically long
+// answer is skipped rather than aborting the whole training run at load time.
+const maxPairBytes = 900
+
 // nonAnswerPrefixes are stub/abstention replies that must never become
 // generative training targets — we want the model to learn to ANSWER, not to
 // reproduce "no sé todavía" or a research stub.
@@ -67,16 +72,21 @@ func HarvestChatDataset(ctx context.Context, store *memory.Store, outPath string
 		if len([]rune(answer)) < 25 {
 			continue
 		}
+		ex := chatTrainingExample{
+			Prompt:     "<USER>" + query + "<ASSISTANT>",
+			Completion: answer + "<EOS>",
+		}
+		// Skip pairs that would overflow the training context once byte-tokenized,
+		// so one long answer never aborts the run.
+		if len(ex.Prompt)+len(ex.Completion) > maxPairBytes {
+			continue
+		}
 		key := strings.ToLower(query)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 
-		ex := chatTrainingExample{
-			Prompt:     "<USER>" + query + "<ASSISTANT>",
-			Completion: answer + "<EOS>",
-		}
 		raw, err := json.Marshal(ex)
 		if err != nil {
 			return 0, err
