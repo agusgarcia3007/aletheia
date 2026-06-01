@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -106,6 +107,71 @@ type adminPipelineRequest struct {
 	Out           string   `json:"out"`
 	Steps         int      `json:"steps"`
 	MinConfidence float64  `json:"min_confidence"`
+	// MinExamples, when > 0, skips training unless the harvest yields at least
+	// this many examples — so the autonomous loop doesn't churn the model on a
+	// tiny corpus.
+	MinExamples int `json:"min_examples"`
+}
+
+// applyPipelineDefaults fills output paths (under the persistent data dir) and
+// the confidence floor when not supplied.
+func (s *Server) applyPipelineDefaults(req *adminPipelineRequest) {
+	dataDir := strings.TrimSpace(s.opts.DataDir)
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	if req.Dataset == "" {
+		req.Dataset = filepath.Join(dataDir, "generated", "mikros_chat_harvested.jsonl")
+	}
+	if req.Out == "" {
+		req.Out = filepath.Join(dataDir, "checkpoints", "aletheia-mikros-gen")
+	}
+	if req.MinConfidence <= 0 {
+		req.MinConfidence = 0.5
+	}
+}
+
+// tryStartPipeline atomically claims the single pipeline slot. Returns false if
+// a run is already in progress.
+func (s *Server) tryStartPipeline() bool {
+	p := s.adminState
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.running {
+		return false
+	}
+	p.running = true
+	p.phase = "starting"
+	p.message = ""
+	p.errText = ""
+	p.seeded = 0
+	p.harvested = 0
+	p.report = nil
+	p.startedAt = time.Now()
+	p.endedAt = time.Time{}
+	return true
+}
+
+// startAutoLearn runs the self-improvement loop on an interval: harvest the
+// growing verified corpus, train a candidate, and hot-swap it in — no manual
+// trigger. Generation stays gated by safeGenerate, so a still-weak model falls
+// back to extractive: the loop can only improve output, never degrade it.
+// Disabled when interval <= 0.
+func (s *Server) startAutoLearn(interval time.Duration) {
+	if interval <= 0 || s.store == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			req := adminPipelineRequest{MinExamples: 20}
+			s.applyPipelineDefaults(&req)
+			if s.tryStartPipeline() {
+				s.runAdminPipeline(req)
+			}
+		}
+	}()
 }
 
 func (s *Server) handleAdminPipeline(w http.ResponseWriter, r *http.Request) {
@@ -126,40 +192,11 @@ func (s *Server) handleAdminPipeline(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Default outputs under the persistent data dir (a mounted volume), writable
-	// AND surviving redeploys — unlike checkpoints/ and datasets/ which ship in
-	// the read-only image layer.
-	dataDir := strings.TrimSpace(s.opts.DataDir)
-	if dataDir == "" {
-		dataDir = "data"
-	}
-	if req.Dataset == "" {
-		req.Dataset = filepath.Join(dataDir, "generated", "mikros_chat_harvested.jsonl")
-	}
-	if req.Out == "" {
-		req.Out = filepath.Join(dataDir, "checkpoints", "aletheia-mikros-gen")
-	}
-	if req.MinConfidence <= 0 {
-		req.MinConfidence = 0.5
-	}
-
-	p := s.adminState
-	p.mu.Lock()
-	if p.running {
-		p.mu.Unlock()
+	s.applyPipelineDefaults(&req)
+	if !s.tryStartPipeline() {
 		writeAPIError(w, http.StatusConflict, "invalid_request_error", "pipeline", "already_running", "a pipeline run is already in progress")
 		return
 	}
-	p.running = true
-	p.phase = "starting"
-	p.message = ""
-	p.errText = ""
-	p.seeded = 0
-	p.harvested = 0
-	p.report = nil
-	p.startedAt = time.Now()
-	p.endedAt = time.Time{}
-	p.mu.Unlock()
 
 	go s.runAdminPipeline(req)
 
@@ -218,6 +255,10 @@ func (s *Server) runAdminPipeline(req adminPipelineRequest) {
 	p.mu.Unlock()
 	if n == 0 {
 		finish("done", "no verified examples to train on yet — seed more topics first", "")
+		return
+	}
+	if req.MinExamples > 0 && n < req.MinExamples {
+		finish("done", fmt.Sprintf("only %d verified examples (< %d) — skipping training this cycle", n, req.MinExamples), "")
 		return
 	}
 

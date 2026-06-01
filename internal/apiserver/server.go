@@ -53,6 +53,9 @@ type Options struct {
 	// admin pipeline writes harvested datasets and trained checkpoints, so they
 	// survive redeploys. Empty falls back to a relative "data" dir.
 	DataDir string
+	// AutoLearnInterval, when > 0, runs the self-improvement loop on that cadence
+	// (harvest → train → hot-swap). Zero disables it.
+	AutoLearnInterval time.Duration
 }
 
 type Server struct {
@@ -173,6 +176,8 @@ func New(opts Options) (*Server, error) {
 	// Prefer a persisted self-trained checkpoint over the baked base, so a model
 	// trained by the admin pipeline is served after a restart/redeploy.
 	s.preferTrainedCheckpoint()
+	// Autonomous self-improvement: harvest → train → hot-swap on a cadence.
+	s.startAutoLearn(opts.AutoLearnInterval)
 	return s, nil
 }
 

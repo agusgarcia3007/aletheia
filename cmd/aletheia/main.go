@@ -1007,6 +1007,7 @@ func runServe(args []string) error {
 	knowledgePath := fs.String("knowledge", envDefault("ALETHEIA_KNOWLEDGE", apiserver.DefaultKnowledgePath), "local knowledge corpus directory indexed for retrieval")
 	apiKey := fs.String("api-key", os.Getenv("ALETHEIA_API_KEY"), "Bearer API key for /v1/* endpoints")
 	adminToken := fs.String("admin-token", os.Getenv("ALETHEIA_ADMIN_TOKEN"), "token enabling /v1/aletheia/admin/* pipeline endpoints (empty = disabled)")
+	autoLearn := fs.String("autolearn-interval", os.Getenv("ALETHEIA_AUTOLEARN_INTERVAL"), "run the self-improvement loop on this cadence, e.g. 6h (empty = disabled)")
 	auth := fs.String("auth", envDefault("ALETHEIA_AUTH", "bearer"), "authentication mode: bearer or none")
 	maxBodyBytes := fs.Int64("max-body-bytes", apiserver.DefaultMaxBodyBytes, "maximum JSON request body size")
 	if err := fs.Parse(args); err != nil {
@@ -1038,19 +1039,20 @@ func runServe(args []string) error {
 		return err
 	}
 	server, err := apiserver.New(apiserver.Options{
-		Addr:             *addr,
-		Checkpoint:       *checkpoint,
-		CheckpointsDir:   *checkpointsDir,
-		ModelName:        *modelName,
-		APIKey:           *apiKey,
-		Auth:             *auth,
-		MaxBodyBytes:     *maxBodyBytes,
-		Store:            store,
-		Research:         researchOptionsFromConfig(cfg),
-		RouterCheckpoint: *routerCheckpoint,
-		KnowledgePath:    *knowledgePath,
-		AdminToken:       *adminToken,
-		DataDir:          *dataDir,
+		Addr:              *addr,
+		Checkpoint:        *checkpoint,
+		CheckpointsDir:    *checkpointsDir,
+		ModelName:         *modelName,
+		APIKey:            *apiKey,
+		Auth:              *auth,
+		MaxBodyBytes:      *maxBodyBytes,
+		Store:             store,
+		Research:          researchOptionsFromConfig(cfg),
+		RouterCheckpoint:  *routerCheckpoint,
+		KnowledgePath:     *knowledgePath,
+		AdminToken:        *adminToken,
+		DataDir:           *dataDir,
+		AutoLearnInterval: parseAutoLearnInterval(*autoLearn),
 	})
 	if err != nil {
 		return err
@@ -1305,4 +1307,18 @@ func envDefault(name string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// parseAutoLearnInterval parses a Go duration (e.g. "6h"); empty/invalid -> 0
+// (self-improvement loop disabled).
+func parseAutoLearnInterval(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }

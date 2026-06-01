@@ -79,3 +79,21 @@ func TestAdminPipelineRunsAndReportsStatus(t *testing.T) {
 		t.Fatalf("harvested = %v, want 0 on empty corpus", snap["harvested"])
 	}
 }
+
+func TestTryStartPipelineIsSingleFlight(t *testing.T) {
+	store := newTestStore(t)
+	server := newTestServer(t, Options{APIKey: "secret", Store: store})
+	if !server.tryStartPipeline() {
+		t.Fatal("first start should succeed")
+	}
+	if server.tryStartPipeline() {
+		t.Fatal("second start must be rejected while running")
+	}
+	// Release and confirm it can start again.
+	server.adminState.mu.Lock()
+	server.adminState.running = false
+	server.adminState.mu.Unlock()
+	if !server.tryStartPipeline() {
+		t.Fatal("start should succeed after release")
+	}
+}

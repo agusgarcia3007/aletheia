@@ -53,6 +53,10 @@ ENV ALETHEIA_KNOWLEDGE=/app/knowledge
 # Persist DB + harvested datasets + trained checkpoints in the /data volume.
 ENV ALETHEIA_DATA_DIR=/data
 ENV ALETHEIA_DB=/data/memory.sqlite
+# Self-improvement loop: every 6h harvest the verified corpus, retrain, and
+# hot-swap (only trains once ≥20 verified examples exist). Generation stays gated,
+# so it can only improve output, never degrade it.
+ENV ALETHEIA_AUTOLEARN_INTERVAL=6h
 
 EXPOSE 8080
 ENTRYPOINT ["/app/aletheia", "serve"]
