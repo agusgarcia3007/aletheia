@@ -21,7 +21,7 @@ type chatTrainingExample struct {
 // maxPairBytes caps the byte length of a (prompt+completion) pair so it fits the
 // default training context (1024 byte-tokens) with margin. A pathologically long
 // answer is skipped rather than aborting the whole training run at load time.
-const maxPairBytes = 900
+const maxPairBytes = 1000
 
 // nonAnswerPrefixes are stub/abstention replies that must never become
 // generative training targets — we want the model to learn to ANSWER, not to

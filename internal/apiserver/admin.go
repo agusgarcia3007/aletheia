@@ -125,11 +125,14 @@ func (s *Server) handleAdminPipeline(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Default outputs under ./data — the mounted volume is writable AND
+	// persistent, unlike checkpoints/ and datasets/ which ship in the (read-only)
+	// image layer.
 	if req.Dataset == "" {
-		req.Dataset = "datasets/generated/mikros_chat_harvested.jsonl"
+		req.Dataset = "data/generated/mikros_chat_harvested.jsonl"
 	}
 	if req.Out == "" {
-		req.Out = "checkpoints/aletheia-mikros-gen"
+		req.Out = "data/checkpoints/aletheia-mikros-gen"
 	}
 	if req.MinConfidence <= 0 {
 		req.MinConfidence = 0.5
