@@ -133,9 +133,6 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		return Report{}, err
 	}
 
-	// Harvest router examples produced by the deterministic guardrails during
-	// real chat. These are verified labels (when a guardrail fires, the intent is
-	// known), so they are safe self-improvement signal for the router.
 	routerNodes, err := store.GraphNodes(ctx, "router_example")
 	if err != nil {
 		return Report{}, err
@@ -232,14 +229,14 @@ func trainAndPromoteRouter(opts Options, report *Report) error {
 	}
 	baseline, _, err := router.TrainLinear(base, trainOpts)
 	if err != nil {
-		// No usable baseline (e.g. empty base): fall back to promoting candidate.
+
 		baseline = candidate
 	}
 
 	report.RouterCandidateAcc = candidate.Accuracy(valSet)
 	report.RouterBaseAccuracy = baseline.Accuracy(valSet)
 	if report.RouterCandidateAcc+1e-9 >= report.RouterBaseAccuracy {
-		// Train the promoted artifact on ALL combined data (train + val).
+
 		promoted, _, err := router.TrainLinear(combined, trainOpts)
 		if err != nil {
 			return err

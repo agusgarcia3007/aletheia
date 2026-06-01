@@ -63,7 +63,7 @@ func goSnippetTypeChecks(code string) (bool, []string) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "snippet.go", src, parser.SkipObjectResolution)
 		if err != nil {
-			continue // not parseable in this wrapping; try the next
+			continue
 		}
 		var hard []string
 		conf := types.Config{
@@ -75,7 +75,7 @@ func goSnippetTypeChecks(code string) (bool, []string) {
 				}
 			},
 		}
-		// Check reports every error via the Error handler; we classify there.
+
 		_, _ = conf.Check("p", fset, []*ast.File{file}, nil)
 		if len(hard) == 0 {
 			return true, nil

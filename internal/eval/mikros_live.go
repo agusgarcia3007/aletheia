@@ -193,8 +193,6 @@ func seedLiveResearchFixtures(ctx context.Context, store *memory.Store) error {
 		return err
 	}
 
-	// Neutral, non-sports fixture: proves the generic extractor lifts the
-	// answer from evidence on any domain, with zero baked-in facts.
 	golang, err := store.CreateResearchJob(ctx, memory.ResearchJob{
 		ID:         "live-go-history",
 		Query:      "en que anio se creo el lenguaje go",

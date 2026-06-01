@@ -23,7 +23,6 @@ func TestRouterHarvestAndPromotionGate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate verified routing labels recorded by the server's guardrails.
 	harvested := []struct{ text, intent string }{
 		{"cuanto es 12 por 12?", "math"},
 		{"cuanto es 5 mas 9?", "math"},
@@ -65,7 +64,7 @@ func TestRouterHarvestAndPromotionGate(t *testing.T) {
 	}
 	t.Logf("examples=%d base=%.3f cand=%.3f promoted=%v reason=%q",
 		report.RouterExamples, report.RouterBaseAccuracy, report.RouterCandidateAcc, report.RouterPromoted, report.RouterPromotionReason)
-	// The gate must never ship a worse router.
+
 	if report.RouterPromoted && report.RouterCandidateAcc+1e-9 < report.RouterBaseAccuracy {
 		t.Fatalf("promoted a worse router: cand %.3f < base %.3f", report.RouterCandidateAcc, report.RouterBaseAccuracy)
 	}

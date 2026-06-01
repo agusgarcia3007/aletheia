@@ -149,9 +149,7 @@ func New(opts Options) (*Server, error) {
 	for _, name := range expertNames {
 		s.experts[name] = &atomic.Uint64{}
 	}
-	// Knowledge lives outside the weights: index the local corpus and let the
-	// coding answerer retrieve from it. Without a store, coding stays curated +
-	// honest-miss only.
+
 	if s.store != nil {
 		if err := s.indexKnowledge(opts.KnowledgePath); err != nil {
 			return nil, fmt.Errorf("index knowledge corpus: %w", err)
@@ -312,7 +310,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	} else {
 		_, _ = fmt.Fprintf(w, "aletheia_memory_configured 0\n")
 	}
-	// Sparse-expert routing distribution: which capability handled each request.
+
 	for _, name := range expertNames {
 		_, _ = fmt.Fprintf(w, "aletheia_expert_total{expert=%q} %d\n", name, s.experts[name].Load())
 	}
@@ -379,30 +377,24 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(effectiveUserQuery(req.Messages))
 	decision := s.routeChat(query, req.Messages, req.Tools)
-	// Sparse expert routing: exactly one capability expert handles each request,
-	// cheap deterministic experts short-circuit before expensive ones. A math
-	// query is always routed to the math answerer (real computation), regardless
-	// of the still-weak neural router.
+
 	if query != "" && looksLikeMath(query) {
 		decision.Intent = router.IntentMath
 	} else if query != "" && looksLikeNonsense(query) {
-		// Low-signal/nonsense input: ask for a reformulation instead of letting
-		// the weak router misclassify it as smalltalk or emit generation noise.
+
 		content := "No entiendo bien tu mensaje. ¿Podés reformularlo? Puedo ayudar con código, cálculos, traducciones cortas, herramientas tipo OpenCode o preguntas con evidencia."
 		s.expert("nonsense")
 		s.recordRouterExample(query, router.IntentAbstain)
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	} else if isAmbiguousFollowup(lastUserMessage(req.Messages)) {
-		// Bare "dale"/"continua"/"y eso?" with no usable context: ask for it
-		// instead of repeating a greeting.
+
 		content := "Necesito un poco mas de contexto para seguir. Decime el tema o la pregunta completa y respondo con evidencia si hace falta."
 		s.expert("ambiguous")
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
 	} else if query != "" && isCodingKnowledgeQuery(query) {
-		// Coding-knowledge questions are answered by the coding answerer (curated
-		// example → retrieved corpus → honest miss), never by research or noise.
+
 		if isCodeGenerationRequest(normalizeBasicChat(query)) {
 			decision.Intent = router.IntentCodeGeneration
 		} else {
@@ -411,8 +403,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	forceEvidence := query != "" && isFactualKnowledgeQuestion(query)
 	if forceEvidence {
-		// Verified label: a world-knowledge question routes to research, however
-		// it is ultimately answered/abstained below.
+
 		s.recordRouterExample(query, router.IntentFactualResearch)
 	}
 	if !forceEvidence {
@@ -465,8 +456,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Untrained checkpoint or noisy output: ask for the missing detail
-		// instead of fabricating an answer.
+
 		content := "Puedo ayudarte a generar ese código, pero necesito un poco más de detalle: lenguaje, objetivo concreto y entrada/salida esperada. No voy a inventar una respuesta."
 		respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 		return
@@ -514,9 +504,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			researchMode = strings.TrimSpace(req.Aletheia.Research)
 		}
 		if shouldResearch(query, researchMode, s.research) {
-			// Sync-first: try to answer in this same turn instead of returning a
-			// job_id and forcing a second round-trip. Falls back to a background
-			// job (and a stub) only when it can't beat the latency cap.
+
 			researchAnswer, jobID, ok := s.researchSyncFirst(r.Context(), query)
 			if ok {
 				s.expert("research_verified")
@@ -574,8 +562,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		s.expert("generated")
 		return
 	}
-	// Last resort: the generative core is not trained/clean yet. Abstain
-	// honestly rather than emit byte-model noise.
+
 	s.expert("honest_fallback")
 	respond(s.chatResponse(responseModelID(req.Model, served.ID), honestFallback, s.textUsage(prompt, honestFallback)))
 }
@@ -871,9 +858,7 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		TopK:        req.TopK,
 	})
 	if !ok {
-		// Honest abstention: an untrained/bootstrap checkpoint must never emit
-		// raw byte-model noise here either. This endpoint goes through the same
-		// generation guard as chat (principle #1: abstain over hallucinate).
+
 		generated = honestFallback
 		usage = map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 	}
@@ -1012,9 +997,7 @@ func effectiveUserQuery(messages []chatMessage) string {
 	if last == "" {
 		return ""
 	}
-	// Interop with clients that pack conversation context into a single user
-	// message (e.g. "... Current user message:\n<question>"). Aletheia routes on
-	// the real question, not the wrapper boilerplate, so unwrap it.
+
 	last = unwrapPackedUserMessage(last)
 	if !isContextualFollowup(last) {
 		return last
@@ -1143,7 +1126,7 @@ func (s *Server) researchSyncFirst(ctx context.Context, query string) (string, s
 	worker := research.NewWorker(s.store, s.research)
 	result, err := worker.RunJob(runCtx, job)
 	if err != nil {
-		// Didn't beat the cap — hand it to the background worker to finish.
+
 		job.Status = "queued"
 		_ = s.store.UpdateResearchJob(context.Background(), job)
 		s.queued.Add(1)
@@ -1286,14 +1269,18 @@ func bestResearchCandidate(query string, queryTokens map[string]bool, sourceTitl
 	return best
 }
 
+var publicGluedSentenceRe = regexp.MustCompile(`([.!?])(\p{Lu})`)
+
 func cleanPublicResearchText(query string, text string) string {
 	text = stripEvidenceLines(text)
 	text = stripPageChrome(text)
+
+	text = publicGluedSentenceRe.ReplaceAllString(text, "$1 $2")
 	queryTokens := meaningfulChatTokens(query)
 	best := ""
 	bestScore := 0
 	for _, sentence := range splitPublicSentences(text) {
-		sentence = strings.TrimSpace(sentence)
+		sentence = strings.TrimSpace(trimBeforePublicCoreTerm(query, sentence))
 		if len([]rune(sentence)) < 35 || looksLikeTitleOnly(sentence) {
 			continue
 		}
@@ -1306,8 +1293,7 @@ func cleanPublicResearchText(query string, text string) string {
 	if best == "" {
 		best = text
 	}
-	// If after cleaning the text is still page chrome, reject it so the caller
-	// uses a better source or abstains rather than serving navigation noise.
+
 	if containsChrome(best) {
 		return ""
 	}
@@ -1388,9 +1374,7 @@ func stripPageChrome(text string) string {
 	for _, value := range replacements {
 		text = strings.ReplaceAll(text, value, " ")
 	}
-	// Drop sentence-level segments that are page chrome. We split on sentence
-	// terminators only (not ":") so we never rejoin a colon clause with ". " and
-	// silently change its meaning.
+
 	segments := regexp.MustCompile(`[.!?]\s+`).Split(text, -1)
 	kept := make([]string, 0, len(segments))
 	for _, seg := range segments {
@@ -1400,7 +1384,7 @@ func stripPageChrome(text string) string {
 		kept = append(kept, seg)
 	}
 	text = strings.Join(kept, ". ")
-	// Remove non-text symbols/emoji that survive extraction.
+
 	text = stripSymbols(text)
 	return strings.Join(strings.Fields(text), " ")
 }
@@ -1418,7 +1402,7 @@ func containsChrome(text string) bool {
 func stripSymbols(text string) string {
 	var b strings.Builder
 	for _, r := range text {
-		if r > 0x2190 { // arrows, emoji, pictographs and beyond
+		if r > 0x2190 {
 			b.WriteByte(' ')
 			continue
 		}
@@ -1463,7 +1447,11 @@ func trimBeforePublicCoreTerm(query string, text string) string {
 	if best <= 24 {
 		return text
 	}
-	if strings.ContainsAny(text[:best], "\"|•›»>") {
+
+	// Chrome signal: a stray HTML/quote leak or a date/number (byline/timestamp).
+	// A clean prose subject before the keyword has neither and is kept intact.
+	leadIn := text[:best]
+	if strings.ContainsAny(leadIn, "\"|•›»>") || strings.ContainsAny(leadIn, "0123456789") {
 		return strings.TrimSpace(text[best:])
 	}
 	return text
@@ -1474,7 +1462,7 @@ func looksLikeTitleOnly(text string) bool {
 	if text == "" {
 		return true
 	}
-	if isQuestionTitle(text) {
+	if isQuestionTitle(text) || isPublicCaptionLead(text) {
 		return true
 	}
 	if strings.Contains(text, "\n\n") || len([]rune(text)) > 220 {
@@ -1482,6 +1470,22 @@ func looksLikeTitleOnly(text string) bool {
 	}
 	terminal := strings.HasSuffix(text, ".") || strings.HasSuffix(text, "!") || strings.HasSuffix(text, "?")
 	return !terminal || strings.Contains(strings.ToLower(text), " - wikipedia") || strings.Contains(strings.ToLower(text), " | ")
+}
+
+// isPublicCaptionLead skips image/figure/table captions (page furniture, not
+// answers). The lead words are document structure, not domain facts.
+var publicCaptionLeads = map[string]bool{
+	"imagen": true, "foto": true, "fotografia": true, "figura": true, "fig": true,
+	"grafico": true, "tabla": true, "video": true, "ilustracion": true,
+	"mapa": true, "diagrama": true, "captura": true, "infografia": true,
+}
+
+func isPublicCaptionLead(text string) bool {
+	fields := strings.Fields(normalizeBasicChat(text))
+	if len(fields) == 0 {
+		return false
+	}
+	return publicCaptionLeads[fields[0]]
 }
 
 func isQuestionTitle(text string) bool {
@@ -1577,12 +1581,10 @@ func requiredMeaningfulOverlap(tokenCount int) int {
 	case tokenCount <= 1:
 		return 1
 	case tokenCount <= 3:
-		// The distinctive terms must appear, not just one shared generic word: a
-		// single overlap like "protocolo" (common to both an HTTP and a TCP/UDP
-		// question) must never pull an unrelated cached answer across topics.
+
 		return 2
 	default:
-		// Roughly 60% of the query's meaningful terms, floored at 2.
+
 		req := (tokenCount*3 + 4) / 5
 		if req < 2 {
 			req = 2
@@ -1646,8 +1648,7 @@ func isFactualKnowledgeQuestion(query string) bool {
 	if normalized == "" || isChatActionRequest(normalized) || isUnsupportedFutureOutcomeQuestion(normalized) {
 		return false
 	}
-	// Never treat the agent's own smalltalk/identity/help, coding, or translation
-	// prompts as world-knowledge questions.
+
 	if isSmalltalkOrIdentity(normalized) || isTranslationRequest(normalized) {
 		return false
 	}
@@ -1657,10 +1658,7 @@ func isFactualKnowledgeQuestion(query string) bool {
 	if looksLikeMath(normalized) {
 		return false
 	}
-	// General, dictionary-free heuristic: an interrogative about the world is a
-	// factual question. This is the default for "who/what/which/when/where/how
-	// many/why" so unseen topics route to evidence/abstention, not to greetings
-	// or free generation.
+
 	return hasAny(normalized,
 		"quien ", "quienes ", "que ", "cual ", "cuales ",
 		"cuando ", "donde ", "cuanto ", "cuanta ", "cuantos ", "cuantas ", "por que ",
@@ -1774,9 +1772,7 @@ func formatCitations(citations []retriever.Citation) string {
 			continue
 		}
 		seen[path] = true
-		// User-facing sources only: chunk IDs and similarity scores are
-		// internal retrieval debug and must never leak into a chat response
-		// (principle: zero raw-chunk leakage).
+
 		b.WriteString(fmt.Sprintf("- %s\n", path))
 		written++
 		if written >= 5 {

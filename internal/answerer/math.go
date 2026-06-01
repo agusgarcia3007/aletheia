@@ -58,11 +58,11 @@ func LooksLikeMath(query string) bool {
 		"+", "-", "*", "/", "^", " por ", " mas ", " menos ", " dividido ", "suma", "resta", "multiplica", "divide") {
 		return true
 	}
-	// Bare arithmetic expression like "12*(3+4)".
+
 	if mathExprChars.MatchString(strings.TrimSpace(query)) && len(strings.TrimSpace(query)) >= 3 {
 		return true
 	}
-	// Linear equation shape: contains 'x' and '='.
+
 	if strings.Contains(n, "x") && strings.Contains(n, "=") {
 		return true
 	}
@@ -283,7 +283,7 @@ func (p *mathParser) parsePower() (float64, bool) {
 	}
 	if p.peek() == '^' {
 		p.pos++
-		exp, ok := p.parsePower() // right-associative
+		exp, ok := p.parsePower()
 		if !ok {
 			return 0, false
 		}
@@ -330,7 +330,7 @@ func (p *mathParser) parseAtom() (float64, bool) {
 }
 
 func mathNormalize(text string) string {
-	return normalize(text) // reuse router.Normalize via answerer.normalize
+	return normalize(text)
 }
 
 func trimNum(v float64) string {

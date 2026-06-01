@@ -344,7 +344,7 @@ func runTrainRouter(args []string) error {
 	if err != nil {
 		return err
 	}
-	// First pass: hold out a validation set to measure generalization honestly.
+
 	_, valReport, err := router.TrainLinear(examples, router.TrainOptions{
 		Epochs:          *epochs,
 		LearningRate:    *learningRate,
@@ -354,7 +354,7 @@ func runTrainRouter(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Second pass: train on all data for the deployed artifact.
+
 	model, report, err := router.TrainLinear(examples, router.TrainOptions{
 		Epochs:        *epochs,
 		LearningRate:  *learningRate,

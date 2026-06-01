@@ -23,7 +23,8 @@ func CanonicalAnswer(query string, evidence []string) (string, bool) {
 	for _, raw := range evidence {
 		cleaned := cleanExtractedSentence(raw)
 		for _, sentence := range splitSentences(cleaned) {
-			sentence = strings.TrimSpace(sentence)
+
+			sentence = strings.TrimSpace(trimBeforeCoreTerm(query, sentence))
 			if len([]rune(sentence)) < 35 || likelyTitle(sentence) {
 				continue
 			}

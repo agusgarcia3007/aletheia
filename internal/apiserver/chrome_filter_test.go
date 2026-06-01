@@ -10,7 +10,7 @@ import (
 // TestChromeFilteringRemovesPageNoise gates the production fix: navigation/promo
 // chrome and interstitial sources must never reach a public answer.
 func TestChromeFilteringRemovesPageNoise(t *testing.T) {
-	// Exact noise observed from the deployed instance.
+
 	noise := "🐍 También te puede interesar: Cómo obtener un subconjunto de una lista 💡 Ofrecemos servicios profesionales de desarrollo y capacitación en Python a personas y empresas."
 	cleaned := cleanPublicResearchText("en python como invierto una lista", noise)
 	if strings.Contains(strings.ToLower(cleaned), "te puede interesar") ||
@@ -26,7 +26,6 @@ func TestChromeFilteringRemovesPageNoise(t *testing.T) {
 		t.Fatal("chrome phrase not detected")
 	}
 
-	// Cloudflare interstitial titles must be filtered from citations.
 	if publicWebSourceAllowed(memory.WebSource{Title: "Just a moment...", FinalURL: "https://es.stackoverflow.com/x"}) {
 		t.Fatal("interstitial 'Just a moment...' source should be rejected")
 	}

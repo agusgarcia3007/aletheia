@@ -225,8 +225,7 @@ func TestWorkerExtractsSupportedAnswerFromEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The answer must be lifted verbatim from the evidence, not synthesized
-	// from baked-in facts.
+
 	if !strings.Contains(result.Answer, "Argentina") || !strings.Contains(result.Answer, "Colombia") {
 		t.Fatalf("answer = %q", result.Answer)
 	}

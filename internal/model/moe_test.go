@@ -25,7 +25,7 @@ func TestTransformerV2MoEForwardIsValidAndDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Each layer must have built 4 experts and a gate.
+
 	for i, layer := range m.Layers {
 		if len(layer.Experts) != 4 {
 			t.Fatalf("layer %d has %d experts, want 4", i, len(layer.Experts))
@@ -78,7 +78,7 @@ func TestTransformerV2DenseWhenNoExperts(t *testing.T) {
 }
 
 func TestTopKExpertsClampAndIndices(t *testing.T) {
-	m, _ := NewTransformerV2(moeConfig(3, 9)) // top_k > num_experts
+	m, _ := NewTransformerV2(moeConfig(3, 9))
 	if got := m.topKExperts(); got != 3 {
 		t.Fatalf("topKExperts clamp = %d, want 3", got)
 	}
@@ -89,14 +89,13 @@ func TestTopKExpertsClampAndIndices(t *testing.T) {
 }
 
 func TestMoEAuxLoss(t *testing.T) {
-	// Perfectly balanced load over 4 experts → loss == 1 (its minimum for the
-	// uniform case in this formulation).
+
 	frac := []float32{0.25, 0.25, 0.25, 0.25}
 	prob := []float32{0.25, 0.25, 0.25, 0.25}
 	if loss := MoEAuxLoss(frac, prob); math.Abs(float64(loss)-1.0) > 1e-6 {
 		t.Fatalf("balanced aux loss = %v, want 1.0", loss)
 	}
-	// Collapsed load (all tokens to one expert) → higher loss.
+
 	collapsed := MoEAuxLoss([]float32{1, 0, 0, 0}, []float32{1, 0, 0, 0})
 	if collapsed <= 1.0 {
 		t.Fatalf("collapsed aux loss = %v, want > 1.0", collapsed)

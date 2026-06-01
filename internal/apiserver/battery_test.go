@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// ----- battery harness -------------------------------------------------------
-//
-// This is an out-of-distribution stress test for the public aletheia-mikros
-// chat surface. Every prompt here is intentionally NOT one of the curated eval
-// cases and NOT a verbatim key in the answerer hardcoded maps. The goal is to
-// measure generalization and the project's own headline metrics
-// (hallucination_rate, raw_chunk_leakage, links_only_rate, false_verified_rate,
-// natural_answer_rate, abstention_accuracy, capability_rate) on novel input.
-//
-// Run: go test ./internal/apiserver -run TestBatteryReport -v -count=1
-
 type batteryCase struct {
 	category string
 	prompt   string
@@ -78,7 +67,7 @@ func globalLeaks(content string) []string {
 		leaks = append(leaks, "raw_chunk")
 	}
 	low := strings.ToLower(content)
-	// links-only: response is essentially just a URL list with no prose.
+
 	if strings.HasPrefix(strings.TrimSpace(low), "http") && len(strings.Fields(content)) < 6 {
 		leaks = append(leaks, "links_only")
 	}
@@ -104,8 +93,6 @@ func extractContent(t *testing.T, raw string) (string, bool) {
 	isTool := response.Choices[0].FinishReason == "tool_calls" || len(response.Choices[0].Message.ToolCalls) > 0
 	return response.Choices[0].Message.Content, isTool
 }
-
-// helper checks ---------------------------------------------------------------
 
 func mustContainAny(needles ...string) func(string, bool, string) (string, bool) {
 	return func(content string, _ bool, _ string) (string, bool) {
@@ -194,7 +181,6 @@ func TestBatteryReport(t *testing.T) {
 		}
 		content, isTool := extractContent(t, rec.Body.String())
 
-		// global leak accounting
 		leaks := globalLeaks(content)
 		if len(leaks) > 0 {
 			totalLeaks++
@@ -204,13 +190,13 @@ func TestBatteryReport(t *testing.T) {
 				}
 			}
 		}
-		// natural answer: non-empty prose OR a valid tool call
+
 		if isTool || (strings.TrimSpace(content) != "" && len(globalLeaks(content)) == 0) {
 			naturalAnswers++
 		}
 
 		reason, pass := c.check(content, isTool, rec.Body.String())
-		// any leak overrides a pass
+
 		if len(leaks) > 0 {
 			pass = false
 			reason = "LEAK:" + strings.Join(leaks, ",") + " | " + reason
@@ -222,14 +208,13 @@ func TestBatteryReport(t *testing.T) {
 			if len(st.failures) < 5 {
 				st.failures = append(st.failures, fmt.Sprintf("%q -> %s | got: %s", c.prompt, reason, truncate(content, 100)))
 			}
-			// a non-abstaining wrong factual answer counts as hallucination
+
 			if c.category == "factual_no_research" && !isAbstention(content) {
 				totalHallucination++
 			}
 		}
 	}
 
-	// ---- report ----
 	sort.Strings(order)
 	fmt.Println("\n================ ALETHEIA MIKROS — BATERÍA OUT-OF-DISTRIBUTION ================")
 	fmt.Printf("%-28s %6s %6s %8s\n", "categoría", "pass", "fail", "rate")
@@ -270,7 +255,6 @@ func TestBatteryReport(t *testing.T) {
 	}
 	fmt.Println("\n===============================================================================")
 
-	// ---- permanent gate: safety metrics must be perfect, capability above floor ----
 	if totalLeaks != 0 {
 		t.Errorf("raw_chunk/action leak must be 0, got %d", totalLeaks)
 	}

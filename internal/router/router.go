@@ -178,8 +178,7 @@ func TrainLinear(examples []TrainingExample, opts TrainOptions) (LinearRouter, T
 	if opts.MinConfidence <= 0 {
 		opts.MinConfidence = 0.35
 	}
-	// Hold out a validation set so generalization is measured, not just memorized
-	// training accuracy. A split of 0 trains on everything (legacy behavior).
+
 	trainSet, valSet := splitExamples(examples, opts.ValidationSplit)
 	r := LinearRouter{
 		Intents:       append([]Intent(nil), PublicIntents...),

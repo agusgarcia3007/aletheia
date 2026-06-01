@@ -21,7 +21,7 @@ func (s *Server) indexKnowledge(path string) error {
 		return nil
 	}
 	if _, err := os.Stat(path); err != nil {
-		// A missing corpus is not fatal: coding stays curated + honest-miss.
+
 		return nil
 	}
 	indexer := retriever.Indexer{Store: s.store}
@@ -41,17 +41,15 @@ func (s *Server) indexKnowledge(path string) error {
 // When learning is disabled (or no store), it returns ok=false so the answerer
 // asks for the missing detail. This is how knowledge grows without code edits.
 func (s *Server) codingKnowledgeOrLearn(ctx context.Context, query string) (string, string, bool) {
-	// 1) Already learned in a previous turn (persisted in SQLite). Any Go code in
-	// the learned answer is checked with the in-process parser before we present
-	// it as knowledge — verifier-first applies to learned content too.
+
 	if answer, ok := s.completedResearchAnswer(ctx, query); ok {
 		return verifyLearnedCoding(query, answer), "", true
 	}
-	// 2) Verified seed corpus / indexed knowledge.
+
 	if answer, citation, ok := s.codingRetrieval(ctx, query); ok {
 		return answer, citation, true
 	}
-	// 3) Learn on demand.
+
 	if s.store == nil || !s.research.Enabled {
 		return "", "", false
 	}

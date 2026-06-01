@@ -26,7 +26,7 @@ func TestCodingLearnOnDemandLoop(t *testing.T) {
 		APIKey:         "secret",
 		CheckpointsDir: root,
 		Store:          store,
-		KnowledgePath:  t.TempDir(), // empty corpus: nothing about Swift is shipped
+		KnowledgePath:  t.TempDir(),
 		Research: research.Options{
 			Enabled:               true,
 			AutoOnKnowledgeGap:    true,
@@ -42,18 +42,15 @@ func TestCodingLearnOnDemandLoop(t *testing.T) {
 
 	const swiftQuery = "como hago un for loop en swift?"
 
-	// 1) First ask: Aletheia does not know Swift. It must say so AND start learning.
 	first := chatContent(t, server, swiftQuery)
 	if !strings.Contains(first, "aprendiendo") || !strings.Contains(first, "Volvé a preguntar") {
 		t.Fatalf("first answer should start learning, got: %q", first)
 	}
 
-	// 2) The learner runs (offline fake): fetch Swift content, extract, store.
 	runFakeLearner(t, store, opts.Research, swiftQuery,
 		"Swift: for loop",
 		"En Swift un for loop se escribe asi: for i in 1...5 { print(i) }. El rango 1...5 es inclusivo y recorre del 1 al 5.")
 
-	// 3) Ask again: now it answers from learned memory, with a source.
 	second := chatContent(t, server, swiftQuery)
 	if strings.Contains(second, "aprendiendo") {
 		t.Fatalf("second answer should come from learned memory, still learning: %q", second)
@@ -62,8 +59,6 @@ func TestCodingLearnOnDemandLoop(t *testing.T) {
 		t.Fatalf("second answer should contain the learned Swift knowledge, got: %q", second)
 	}
 
-	// 4) It stuck: a brand-new server on the SAME store answers without any
-	// learner available (knowledge persisted in SQLite).
 	server2, err := New(opts)
 	if err != nil {
 		t.Fatal(err)

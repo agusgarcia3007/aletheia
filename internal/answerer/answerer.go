@@ -134,8 +134,7 @@ func (MathAnswerer) CanAnswer(_ context.Context, req Request) (float64, Reason) 
 func (MathAnswerer) Answer(_ context.Context, req Request) (Response, error) {
 	op := parseArithmetic(req.Query)
 	if !op.ok {
-		// Beyond two-operand arithmetic: percentages, powers, roots, linear
-		// equations and general expressions are computed for real.
+
 		if answer, ok := EvaluateMath(req.Query); ok {
 			return Response{Content: answer, Intent: router.IntentMath, Reason: "computed math"}, nil
 		}
@@ -235,8 +234,7 @@ func (c CodingAnswerer) Answer(ctx context.Context, req Request) (Response, erro
 	slots := detectCodingSlots(query)
 	if slots.Language == "" {
 		if slots.Unsupported != "" {
-			// A language we don't hardcode: the corpus is how language support
-			// grows without code changes. Try retrieval before declining.
+
 			if c.Knowledge != nil {
 				if answer, citation, ok := c.Knowledge(ctx, req.Query); ok {
 					content := answer
@@ -254,18 +252,15 @@ func (c CodingAnswerer) Answer(ctx context.Context, req Request) (Response, erro
 		}
 		return Response{Content: "Puedo ayudar con codigo, pero necesito el lenguaje y el objetivo. Ejemplo: `en Python, lee un CSV y filtra filas por estado`.", Intent: router.IntentCodingHelp, Reason: "missing coding language"}, nil
 	}
-	// Curated worked example for a recognized (language, task) pair.
+
 	if content := codingResponse(slots); content != "" {
 		return Response{Content: content, Intent: req.Intent, Reason: "verified worked example"}, nil
 	}
-	// Genuine "introduce me to the language" request: base description + minimal
-	// example is an honest answer to what was asked.
+
 	if slots.Task == "intro" {
 		return Response{Content: genericCodingResponse(slots), Intent: req.Intent, Reason: "language overview"}, nil
 	}
-	// Specific task without a curated example: try the external citable knowledge
-	// base before giving up. This is the retrieval-first path — knowledge lives
-	// outside the weights, not in a hardcoded map.
+
 	if c.Knowledge != nil {
 		if answer, citation, ok := c.Knowledge(ctx, req.Query); ok {
 			content := answer
@@ -275,8 +270,7 @@ func (c CodingAnswerer) Answer(ctx context.Context, req Request) (Response, erro
 			return Response{Content: content, Intent: req.Intent, Reason: "retrieved coding knowledge"}, nil
 		}
 	}
-	// No curated example and nothing retrieved: do NOT fabricate an unrelated
-	// snippet. Be honest and ask for the missing detail.
+
 	return Response{Content: honestCodingMiss(slots), Intent: req.Intent, Reason: "coding task without verified example"}, nil
 }
 
@@ -326,14 +320,12 @@ func detectCodingSlots(query string) codingSlots {
 	case hasAny(query, "diferencia", "compar", " vs ", "entre"):
 		s.Task = "compare"
 	case hasAny(query, "componente", "component", "hola mundo", "hello world"):
-		// Generic "make a component / hello world" request: a language skeleton
-		// is a real, honest starting point.
+
 		s.Task = "intro"
 	case hasAny(query, "hablame", "explicame", "explica", "que es", "como es", "para que sirve", "intro", "introduccion", "aprender", "contame de", "contame sobre"):
 		s.Task = "intro"
 	default:
-		// A specific how-to we did not recognize. NOT an intro: we must not
-		// fabricate an unrelated example for it.
+
 		s.Task = "unknown"
 	}
 	if s.Language == "" {

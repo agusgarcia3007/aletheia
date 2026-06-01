@@ -132,6 +132,10 @@ Eval suites live in `evals/` (`production`, `mikros_live`, `mikros_artifact`, `m
   Don't add per-request work that breaks this; reuse the embedding memoization pattern.
 - **Determinism.** Routing/training/eval paths avoid RNG where reproducibility matters (deterministic
   validation splits, deterministic top-k). Preserve this.
+- **No comments in code.** Do not write comments — let names and structure carry intent. Refactor for
+  clarity instead of annotating. The only exception is compiler-significant directives (`//go:build`,
+  `//go:embed`, `//go:generate`, `//line`, `//export`, `// +build`), which are kept because removing
+  them breaks the build.
 - **Match the codebase.** Idiomatic Go, standard-library-first, no new heavy deps. Mirror the existing
   package layout and naming.
 - **When extending experts:** add the sparse expert + deterministic guardrail + eval cases together.

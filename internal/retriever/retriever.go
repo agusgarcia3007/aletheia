@@ -316,8 +316,7 @@ func (r Retriever) Answer(ctx context.Context, query string, opts SearchOptions)
 		sentence = bestSentence(query, hits[0].Text)
 	}
 	if sentence == "" {
-		// Last resort: a metadata-stripped preview, never the raw chunk with its
-		// "Source URL:"/"Fetched:" plumbing lines.
+
 		sentence = preview(stripChunkMetadata(hits[0].Text), 220)
 	}
 	citations := make([]Citation, 0, len(hits))
@@ -653,7 +652,7 @@ func validAnswerSentence(text string) bool {
 	if strings.Contains(text, "=") || strings.Contains(text, "include_") || strings.Contains(text, "await ") {
 		return false
 	}
-	// Never surface stored-chunk plumbing as an answer sentence.
+
 	lower := strings.ToLower(text)
 	if strings.Contains(lower, "source url:") || strings.Contains(lower, "fetched:") {
 		return false

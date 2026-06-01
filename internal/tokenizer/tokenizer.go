@@ -63,7 +63,6 @@ func New() *Tokenizer {
 		idToToken[id] = token
 	}
 
-	// Longest match keeps future overlapping functional tokens deterministic.
 	for i := range specials {
 		for j := i + 1; j < len(specials); j++ {
 			if len(specials[j]) > len(specials[i]) {

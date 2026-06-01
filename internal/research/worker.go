@@ -222,10 +222,7 @@ func (w Worker) storeSource(job memory.ResearchJob, id string, source RankedSour
 	if _, err := w.Store.ReplaceChunks(ctx, doc.ID, chunks); err != nil {
 		return err
 	}
-	// Web evidence is recalled via SQL (WebSourcesByJob / WebClaimsByJob /
-	// retriever over chunks), never via the graph, so we don't write graph
-	// nodes/edges here — they were write-only. The learning graph
-	// (router/selector/trajectory nodes) is unaffected.
+
 	for _, claim := range source.Claims {
 		if _, err := w.Store.RecordWebClaim(ctx, memory.WebClaim{
 			ID:         claim.ID,
@@ -332,7 +329,7 @@ func canonicalClaimAnswer(query string, text string) string {
 	best := ""
 	bestScore := 0.0
 	for _, sentence := range splitSentences(text) {
-		sentence = strings.TrimSpace(sentence)
+		sentence = strings.TrimSpace(trimBeforeCoreTerm(query, sentence))
 		if len([]rune(sentence)) < 35 || likelyTitle(sentence) {
 			continue
 		}
@@ -361,6 +358,13 @@ func canonicalClaimAnswer(query string, text string) string {
 	return strings.TrimSpace(best)
 }
 
+// gluedSentenceRe finds a sentence terminator immediately followed by an
+// uppercase letter ("arbitrariamente.Concepto") — HTML extraction drops the
+// space between a sentence and the heading that followed it. Re-inserting the
+// space lets splitSentences separate them, so the trailing heading becomes its
+// own short fragment that the length/title filters discard.
+var gluedSentenceRe = regexp.MustCompile(`([.!?])(\p{Lu})`)
+
 func cleanExtractedSentence(text string) string {
 	replacements := []string{
 		"WhatsApp", "Twitter", "Facebook", "Linkedin", "LinkedIn", "Telegram",
@@ -369,7 +373,27 @@ func cleanExtractedSentence(text string) string {
 	for _, value := range replacements {
 		text = strings.ReplaceAll(text, value, " ")
 	}
+	text = gluedSentenceRe.ReplaceAllString(text, "$1 $2")
 	return strings.Join(strings.Fields(text), " ")
+}
+
+// captionLeads are document-structure words (not domain facts) that begin an
+// image/figure/table caption. A "sentence" starting with one is page furniture,
+// not an answer to a question, so the synthesis layer skips it.
+var captionLeads = map[string]bool{
+	"imagen": true, "foto": true, "fotografia": true, "fotografía": true,
+	"figura": true, "fig": true, "grafico": true, "gráfico": true, "tabla": true,
+	"video": true, "vídeo": true, "ilustracion": true, "ilustración": true,
+	"mapa": true, "diagrama": true, "captura": true, "infografia": true, "infografía": true,
+}
+
+func isCaptionLead(text string) bool {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return false
+	}
+	first := strings.ToLower(strings.Trim(fields[0], ".,:;!?()[]{}\"'"))
+	return captionLeads[first]
 }
 
 // sentenceSplitRe breaks text into candidate sentences. Beyond ordinary
@@ -416,12 +440,12 @@ func trimBeforeCoreTerm(query string, text string) string {
 	if best <= 24 {
 		return text
 	}
-	// Only treat the lead-in as chrome when it carries a structural chrome signal
-	// (a stray HTML/quote leak or list/byline separator). A normal sentence
-	// subject before the keyword (e.g. "The Model Context Protocol lets agents…")
-	// has none of these, so it is left intact rather than truncated.
+
+	// Chrome signal: a stray HTML/quote leak or a date/number (byline or
+	// timestamp). A clean prose subject before the keyword has neither and is
+	// kept intact rather than truncated.
 	leadIn := text[:best]
-	if strings.ContainsAny(leadIn, "\"|•›»>") {
+	if strings.ContainsAny(leadIn, "\"|•›»>") || strings.ContainsAny(leadIn, "0123456789") {
 		return strings.TrimSpace(text[best:])
 	}
 	return text
@@ -432,7 +456,7 @@ func likelyTitle(text string) bool {
 	if text == "" || len([]rune(text)) > 220 {
 		return false
 	}
-	if questionLikeTitle(text) {
+	if questionLikeTitle(text) || isCaptionLead(text) {
 		return true
 	}
 	return !strings.HasSuffix(text, ".") || strings.Contains(text, " - ") || strings.Contains(text, " | ")

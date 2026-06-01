@@ -38,9 +38,6 @@ func TestChatLatencyDeterministicExperts(t *testing.T) {
 	avg := elapsed / time.Duration(n)
 	fmt.Printf("\n[latency] %d requests, avg %.3f ms/req (%.0f req/s)\n", n, float64(avg.Microseconds())/1000, float64(n)/elapsed.Seconds())
 
-	// Generous ceiling: even with SQLite-backed retrieval the deterministic
-	// experts must stay well under 25ms/req. A regression past this means the
-	// fast path lost its sparseness (e.g. uncached full scans).
 	if avg > 25*time.Millisecond {
 		t.Errorf("chat latency regressed: avg %v/req", avg)
 	}

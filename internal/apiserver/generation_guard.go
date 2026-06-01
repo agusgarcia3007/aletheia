@@ -21,7 +21,7 @@ func cleanGeneration(text string) bool {
 	if trimmed == "" {
 		return false
 	}
-	// Leftover protocol/action tokens must never surface as prose.
+
 	if strings.Contains(trimmed, "<ACT_") || strings.Contains(trimmed, "<ACTION") ||
 		strings.Contains(trimmed, "<UNK>") || strings.Contains(trimmed, "<EOS>") {
 		return false
@@ -33,7 +33,7 @@ func cleanGeneration(text string) bool {
 		case r == unicode.ReplacementChar:
 			bad++
 		case r == '\t' || r == '\n' || r == '\r':
-			// allowed whitespace
+
 		case unicode.IsControl(r):
 			bad++
 		case unicode.IsLetter(r):
@@ -43,15 +43,15 @@ func cleanGeneration(text string) bool {
 	if total == 0 {
 		return false
 	}
-	// Any meaningful amount of non-printable/replacement noise disqualifies it.
+
 	if float64(bad)/float64(total) > 0.02 {
 		return false
 	}
-	// Real language has letters; pure-symbol noise does not.
+
 	if float64(letters)/float64(total) < 0.45 {
 		return false
 	}
-	// Require at least a couple of dictionary-shaped words (length >= 3 letters).
+
 	realWords := 0
 	for _, word := range strings.Fields(trimmed) {
 		if countLetters(word) >= 3 {
@@ -76,7 +76,7 @@ func countLetters(word string) int {
 // of serving noise.
 func (s *Server) safeGenerate(served *servedModel, prompt string, opts generationOptions) (string, map[string]int, bool) {
 	if served == nil || served.Manifest.Step <= 0 {
-		// Zero-step bootstrap checkpoint: never trust its generation.
+
 		return "", nil, false
 	}
 	text, usage, err := s.generate(served, prompt, opts)

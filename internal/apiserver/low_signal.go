@@ -20,8 +20,6 @@ func looksLikeNonsense(query string) bool {
 		return false
 	}
 
-	// 1) Repeated-token spam: "asdf asdf asdf", "blah blah blah". Numbers and
-	// very short tokens are ignored so math like "99 por 99" is not flagged.
 	counts := map[string]int{}
 	wordTokens := 0
 	for _, f := range fields {
@@ -37,7 +35,6 @@ func looksLikeNonsense(query string) bool {
 		}
 	}
 
-	// 2) Keyboard-mash / placeholder tokens making up most of the message.
 	mash := 0
 	for _, f := range fields {
 		if keyboardMash[f] {
@@ -48,8 +45,6 @@ func looksLikeNonsense(query string) bool {
 		return true
 	}
 
-	// 3) Vowel-starved gibberish: long tokens with almost no vowels, when they
-	// dominate the message.
 	gibberish := 0
 	for _, f := range fields {
 		if len([]rune(f)) >= 4 && vowelRatio(f) < 0.15 {

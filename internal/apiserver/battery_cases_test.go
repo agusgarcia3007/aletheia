@@ -14,7 +14,6 @@ func batteryCases() []batteryCase {
 		}
 	}
 
-	// 1) SMALLTALK — novel paraphrases of greetings/identity/help.
 	add("smalltalk", mustContainAny("aletheia", "mikros", "puedo", "ayudar", "codigo", "hola", "evidencia"),
 		"buenas, todo bien?",
 		"hey que onda",
@@ -36,9 +35,6 @@ func batteryCases() []batteryCase {
 		"adios",
 	)
 
-	// 2) CODING — supported languages but NOVEL tasks not in the hardcoded map.
-	// A model "better than the giants" should actually solve these; Aletheia's
-	// parametric coding answerer only has ~6 hardcoded (lang,task) pairs.
 	add("coding_known_lang_novel_task", mustContainAny("```", "def ", "function", "fn ", "func ", "select", "const ", "return"),
 		"en python, como invierto una lista?",
 		"en python, como abro un archivo y leo lineas?",
@@ -56,7 +52,6 @@ func batteryCases() []batteryCase {
 		"en react como hago un input controlado?",
 	)
 
-	// 3) CODING — unsupported languages (router still says coding, answerer can't).
 	add("coding_unsupported_lang", mustContainAny("```", "fun ", "func ", "def ", "<?php", "println", "fn "),
 		"como hago un loop en kotlin?",
 		"dame un ejemplo de funcion en php",
@@ -68,7 +63,6 @@ func batteryCases() []batteryCase {
 		"un ejemplo simple en c#",
 	)
 
-	// 4) MATH — novel arithmetic and beyond-arithmetic.
 	add("math_arithmetic", mustContainAny("=", " es ", " da "),
 		"cuanto es 123 por 456?",
 		"cuanto es 1000 menos 333?",
@@ -84,7 +78,6 @@ func batteryCases() []batteryCase {
 		"resolve la ecuacion 2x + 4 = 10",
 	)
 
-	// 5) TRANSLATION — arbitrary phrases (not the 3 hardcoded ones).
 	add("translation_arbitrary", mustContainAny("the", "cat", "i ", "you", "house", "dog", "good"),
 		"traduce al ingles: el gato come pescado",
 		"traduce al ingles: necesito ayuda con mi codigo",
@@ -93,8 +86,6 @@ func batteryCases() []batteryCase {
 		"traduce: el perro corre rapido",
 	)
 
-	// 6) FACTUAL with research DISABLED — must abstain, never invent.
-	// (This is where a verified small agent is supposed to BEAT giants on trust.)
 	add("factual_no_research", abstains(),
 		"quien es el presidente de francia?",
 		"cual es la capital de australia?",
@@ -113,7 +104,6 @@ func batteryCases() []batteryCase {
 		"que paso en la revolucion francesa?",
 	)
 
-	// 7) FUTURE OUTCOME — must abstain.
 	add("future_outcome_abstain", abstains(),
 		"quien va a ganar el mundial 2030?",
 		"quien sera presidente de argentina en 2035?",
@@ -122,7 +112,6 @@ func batteryCases() []batteryCase {
 		"quien ganara el balon de oro 2099?",
 	)
 
-	// 8) REPO AGENT without tools — boundary message, not invention.
 	add("repo_agent_no_tools", mustContainAny("solve", "herramientas", "tools", "no ejecuto", "cliente"),
 		"arregla este repo de go que falla en go test",
 		"los tests fallan, podes corregir el codigo?",
@@ -141,7 +130,6 @@ func batteryCases() []batteryCase {
 		cs = append(cs, batteryCase{category: "tool_use_with_tools", prompt: p, tools: repoTools, check: isToolCallCheck()})
 	}
 
-	// 10) NONSENSE / low-signal — must abstain.
 	add("nonsense_abstain", abstains(),
 		"blorf zibble quantum vegetable",
 		"asdf asdf asdf",
@@ -149,7 +137,6 @@ func batteryCases() []batteryCase {
 		"lorem ipsum dolor",
 	)
 
-	// 11) AMBIGUOUS FOLLOWUP (single message, no context) — should ask for context or abstain.
 	add("ambiguous", abstains(),
 		"y entonces?",
 		"y eso?",
@@ -157,10 +144,8 @@ func batteryCases() []batteryCase {
 		"dale",
 	)
 
-	// 12) OPEN-ENDED / CREATIVE — giants excel here; measure honest behavior.
 	add("open_ended_creative", func(content string, _ bool, _ string) (string, bool) {
-		// Pass if it produces ANY coherent non-leaking prose (natural answer),
-		// OR honestly abstains. Fail only on empty/garbled output.
+
 		if strings.TrimSpace(content) == "" {
 			return "empty", false
 		}
