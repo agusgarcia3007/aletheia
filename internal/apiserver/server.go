@@ -1664,6 +1664,11 @@ func isFactualKnowledgeQuestion(query string) bool {
 		"cuando ", "donde ", "cuanto ", "cuanta ", "cuantos ", "cuantas ", "por que ",
 		"como ", "how ",
 		"who ", "what ", "which ", "when ", "where ", "how many", "how much", "why ",
+		// Knowledge-seeking imperatives ("explicame X", "contame de Y") are
+		// questions too — without these they fall to the weak router and get a
+		// generic greeting instead of evidence/abstention.
+		"explicame", "explica ", "explicacion", "contame", "contanos", "hablame",
+		"describe", "describi", "descripcion", "definicion", "explain", "tell me about",
 		"ganador", "campeon", "campeones", "copa america", "mundial", "latest",
 	)
 }
