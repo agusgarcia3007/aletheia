@@ -66,7 +66,7 @@ func HarvestChatDataset(ctx context.Context, store *memory.Store, outPath string
 		if job.Confidence < minConfidence {
 			continue
 		}
-		if isNonAnswer(answer) || strings.Contains(answer, "job_id=") {
+		if isNonAnswer(answer) || strings.Contains(answer, "job_id=") || looksLikeStructuredDump(answer) {
 			continue
 		}
 		if len([]rune(answer)) < 25 {
@@ -103,6 +103,23 @@ func HarvestChatDataset(ctx context.Context, store *memory.Store, outPath string
 		return 0, err
 	}
 	return count, nil
+}
+
+// looksLikeStructuredDump rejects table/infobox/nav text (adjacent duplicate
+// tokens like "Argentina Argentina Paraguay Paraguay") so it never becomes a
+// training target.
+func looksLikeStructuredDump(text string) bool {
+	fields := strings.Fields(strings.ToLower(text))
+	if len(fields) < 4 {
+		return false
+	}
+	dups := 0
+	for i := 1; i < len(fields); i++ {
+		if fields[i] == fields[i-1] && len([]rune(fields[i])) >= 3 {
+			dups++
+		}
+	}
+	return dups >= 2
 }
 
 func isNonAnswer(answer string) bool {

@@ -29,7 +29,7 @@ func CanonicalAnswer(query string, evidence []string) (string, bool) {
 		for _, sentence := range splitSentences(cleaned) {
 
 			sentence = strings.TrimSpace(trimBeforeCoreTerm(query, sentence))
-			if len([]rune(sentence)) < 35 || likelyTitle(sentence) {
+			if len([]rune(sentence)) < 35 || likelyTitle(sentence) || looksLikeStructuredDump(sentence) {
 				continue
 			}
 			score := overlapScore(queryTokens, keywordSet(sentence))
@@ -74,6 +74,25 @@ var definitionConnectives = []string{
 	" es ", " es un", " es una", " es el", " es la", " son ", " son un", " son las", " son los",
 	" se define", " se denomina", " se conoce", " consiste en", " se refiere",
 	" is ", " are ", " is a", " is an", " is the", " refers to",
+}
+
+// looksLikeStructuredDump reports whether text is a table/infobox/nav dump
+// rather than prose — HTML extraction of an infobox concatenates cells, leaving
+// telltale adjacent duplicate tokens ("Argentina Argentina Paraguay Paraguay").
+// Such text is never a real answer, so synthesis skips it (and harvest must not
+// store it as a training target). Generic structure, not domain facts.
+func looksLikeStructuredDump(text string) bool {
+	fields := strings.Fields(strings.ToLower(text))
+	if len(fields) < 4 {
+		return false
+	}
+	dups := 0
+	for i := 1; i < len(fields); i++ {
+		if fields[i] == fields[i-1] && len([]rune(fields[i])) >= 3 {
+			dups++
+		}
+	}
+	return dups >= 2
 }
 
 // looksLikeDefinitionQuery reports whether the user is asking what something is

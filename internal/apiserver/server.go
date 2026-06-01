@@ -1789,7 +1789,7 @@ func fourDigitYears(text string) []string {
 
 func isUnsupportedFutureOutcomeQuestion(query string) bool {
 	normalized := normalizeBasicChat(query)
-	if !hasAny(normalized, "gano", "ganador", "campeon", "resultado", "winner", "won", "champion", "result") {
+	if !hasAny(normalized, "gano", "ganar", "ganador", "campeon", "resultado", "winner", "win", "won", "champion", "result") {
 		return false
 	}
 	for _, year := range fourDigitYears(normalized) {

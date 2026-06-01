@@ -331,7 +331,7 @@ func canonicalClaimAnswer(query string, text string) string {
 	bestScore := 0.0
 	for _, sentence := range splitSentences(text) {
 		sentence = strings.TrimSpace(trimBeforeCoreTerm(query, sentence))
-		if len([]rune(sentence)) < 35 || likelyTitle(sentence) {
+		if len([]rune(sentence)) < 35 || likelyTitle(sentence) || looksLikeStructuredDump(sentence) {
 			continue
 		}
 		score := overlapScore(queryTokens, keywordSet(sentence))
@@ -483,10 +483,12 @@ var researchYearRe = regexp.MustCompile(`\b(19|20|21)\d{2}\b`)
 func unsupportedFutureOutcomeQuery(query string) bool {
 	normalized := strings.ToLower(query)
 	if !(strings.Contains(normalized, "gano") ||
+		strings.Contains(normalized, "ganar") ||
 		strings.Contains(normalized, "ganador") ||
 		strings.Contains(normalized, "campeon") ||
 		strings.Contains(normalized, "resultado") ||
 		strings.Contains(normalized, "winner") ||
+		strings.Contains(normalized, "win") ||
 		strings.Contains(normalized, "won") ||
 		strings.Contains(normalized, "champion") ||
 		strings.Contains(normalized, "result")) {
