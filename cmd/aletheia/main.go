@@ -242,9 +242,39 @@ func runDataset(args []string) error {
 	switch args[0] {
 	case "build":
 		return runDatasetBuild(args[1:])
+	case "harvest":
+		return runDatasetHarvest(args[1:])
 	default:
 		return fmt.Errorf("unknown dataset subcommand %q", args[0])
 	}
+}
+
+// runDatasetHarvest turns Aletheia's own verified research jobs into a
+// generative {prompt, completion} dataset — the loop feeding the language model,
+// with no external teacher.
+func runDatasetHarvest(args []string) error {
+	fs := flag.NewFlagSet("dataset harvest", flag.ContinueOnError)
+	dbPath := fs.String("db", memory.DefaultDBPath, "SQLite memory database path")
+	out := fs.String("out", "datasets/generated/mikros_chat_harvested.jsonl", "output JSONL path")
+	minConf := fs.Float64("min-confidence", 0.5, "minimum job confidence to harvest")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	store, err := memory.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(context.Background()); err != nil {
+		return err
+	}
+	n, err := learning.HarvestChatDataset(context.Background(), store, *out, *minConf)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("harvested_examples: %d\n", n)
+	fmt.Printf("dataset: %s\n", *out)
+	return nil
 }
 
 func runDatasetBuild(args []string) error {
