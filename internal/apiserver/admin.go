@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"aletheia/internal/config"
 	"aletheia/internal/harvest"
 	"aletheia/internal/research"
 	"aletheia/internal/training"
@@ -124,9 +125,6 @@ func (s *Server) handleAdminPipeline(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.Config == "" {
-		req.Config = "configs/aletheia-mikros.yaml"
-	}
 	if req.Dataset == "" {
 		req.Dataset = "datasets/generated/mikros_chat_harvested.jsonl"
 	}
@@ -218,13 +216,21 @@ func (s *Server) runAdminPipeline(req adminPipelineRequest) {
 	// 3) Train the model on the harvested dataset (writes a checkpoint; does not
 	// hot-swap the served model — point `serve --checkpoint` at it to use it).
 	p.set("training", "training model on harvested dataset")
-	report, err := training.Train(ctx, training.Options{
-		ConfigPath:    req.Config,
+	trainOpts := training.Options{
 		DatasetPath:   req.Dataset,
 		OutDir:        req.Out,
 		Steps:         req.Steps,
 		OverrideSteps: req.Steps > 0,
-	})
+	}
+	// Use an explicit config path when given; otherwise the built-in default so
+	// training works in a container that ships no configs/ directory.
+	if strings.TrimSpace(req.Config) != "" {
+		trainOpts.ConfigPath = req.Config
+	} else {
+		cfg := config.Default()
+		trainOpts.Config = &cfg
+	}
+	report, err := training.Train(ctx, trainOpts)
 	if err != nil {
 		finish("error", "training failed", err.Error())
 		return

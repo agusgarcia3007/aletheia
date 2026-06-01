@@ -115,6 +115,46 @@ type ResearchConfig struct {
 	AllowedDomains        []string `yaml:"allowed_domains"`
 }
 
+// Default returns the built-in aletheia-mikros configuration so training can run
+// without a YAML file on disk — e.g. inside a deployed container that ships only
+// the binary (no configs/ directory). Mirrors configs/aletheia-mikros.yaml.
+func Default() Config {
+	cfg := Config{
+		Project: ProjectConfig{
+			Name:          "aletheia-mu",
+			DataDir:       "./data",
+			CheckpointDir: "./checkpoints",
+			MemoryDB:      "./data/memory.sqlite",
+		},
+		Model: ModelConfig{
+			Name:          "aletheia-mikros",
+			VocabSize:     512,
+			ContextLength: 256,
+			NLayers:       1,
+			NHeads:        4,
+			DModel:        64,
+			DFF:           128,
+			Dropout:       0,
+			Rope:          true,
+			Norm:          "rmsnorm",
+			Activation:    "swiglu",
+			Seed:          19,
+		},
+		Training: TrainingConfig{
+			BatchSize:       16,
+			LearningRate:    0.06,
+			WeightDecay:     0,
+			MaxSteps:        450,
+			GradClip:        5.0,
+			CheckpointEvery: 100,
+			EvalEvery:       25,
+		},
+		Inference: InferenceConfig{Temperature: 0, TopK: 8, TopP: 1.0, MaxTokens: 96},
+	}
+	cfg.ApplyDefaults()
+	return cfg
+}
+
 func Load(path string) (Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

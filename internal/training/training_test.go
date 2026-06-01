@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"aletheia/internal/config"
 	"aletheia/internal/model"
 	"aletheia/internal/runner"
 	"aletheia/internal/tokenizer"
@@ -61,6 +62,37 @@ func TestLoadChatBasicDataset(t *testing.T) {
 		if !strings.Contains(strings.ToLower(string(raw)), tc.want) {
 			t.Fatalf("%s should contain %q", tc.path, tc.want)
 		}
+	}
+}
+
+// Training must work from the in-memory default config (no YAML on disk), which
+// is how the admin pipeline trains inside a container that ships no configs/.
+func TestTrainWithDefaultConfigNoFile(t *testing.T) {
+	dir := t.TempDir()
+	datasetPath := filepath.Join(dir, "data.jsonl")
+	outDir := filepath.Join(dir, "ckpt")
+	var data strings.Builder
+	for i := 0; i < 8; i++ {
+		data.WriteString(`{"prompt":"<USER>que es una derivada<ASSISTANT>","completion":"La derivada es la razon de cambio instantanea de una funcion.<EOS>"}` + "\n")
+	}
+	writeTrainingFile(t, datasetPath, data.String())
+
+	cfg := config.Default()
+	report, err := Train(context.Background(), Options{
+		Config:        &cfg,
+		DatasetPath:   datasetPath,
+		OutDir:        outDir,
+		Steps:         20,
+		OverrideSteps: true,
+	})
+	if err != nil {
+		t.Fatalf("train with default config: %v", err)
+	}
+	if report.Steps != 20 {
+		t.Fatalf("steps = %d, want 20", report.Steps)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "manifest.json")); err != nil {
+		t.Fatalf("checkpoint manifest missing: %v", err)
 	}
 }
 

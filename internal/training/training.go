@@ -24,6 +24,10 @@ type Options struct {
 	OutDir        string
 	Steps         int
 	OverrideSteps bool
+	// Config, when set, is used directly instead of loading ConfigPath from disk
+	// — lets callers (e.g. the admin pipeline in a config-less container) train
+	// against an in-memory configuration.
+	Config *config.Config
 }
 
 type Report struct {
@@ -83,9 +87,15 @@ func LoadDataset(path string, tok *tokenizer.Tokenizer, contextLength int) ([]mo
 }
 
 func Train(ctx context.Context, opts Options) (Report, error) {
-	cfg, err := config.Load(opts.ConfigPath)
-	if err != nil {
-		return Report{}, err
+	var cfg config.Config
+	if opts.Config != nil {
+		cfg = *opts.Config
+	} else {
+		loaded, err := config.Load(opts.ConfigPath)
+		if err != nil {
+			return Report{}, err
+		}
+		cfg = loaded
 	}
 	if opts.OverrideSteps {
 		cfg.Training.MaxSteps = opts.Steps
