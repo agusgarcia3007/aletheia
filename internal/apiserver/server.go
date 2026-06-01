@@ -1176,7 +1176,7 @@ func formatResearchAnswer(query string, job memory.ResearchJob, sources []memory
 			bullets.WriteString(fmt.Sprintf("- %s - %s\n", title, url))
 		}
 		written++
-		if written >= 5 {
+		if written >= 2 {
 			break
 		}
 	}
@@ -1271,6 +1271,29 @@ func bestResearchCandidate(query string, queryTokens map[string]bool, sourceTitl
 
 var publicGluedSentenceRe = regexp.MustCompile(`([.!?])(\p{Lu})`)
 
+var (
+	publicLeadingSepRe     = regexp.MustCompile(`^[\s"'` + "`" + `·•‹›«»>|–—,;:.\-]+`)
+	publicLeadingDateRe    = regexp.MustCompile(`(?i)^\s*\d{1,2}\s+(?:ene|feb|mar|abr|may|jun|jul|ago|sep|sept|oct|nov|dic|jan|apr|aug|dec)\w*\.?\s+\d{4}\b`)
+	publicLeadingNumDateRe = regexp.MustCompile(`^\s*\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}\b`)
+)
+
+// stripLeadingPublicChrome mirrors research.stripLeadingChrome for the apiserver
+// rendering path: it peels a leading date byline or separator junk off an
+// answer ("3 jun 2023 · Una integral…" -> "Una integral…").
+func stripLeadingPublicChrome(text string) string {
+	for {
+		before := text
+		text = publicLeadingDateRe.ReplaceAllString(text, "")
+		text = publicLeadingNumDateRe.ReplaceAllString(text, "")
+		text = publicLeadingSepRe.ReplaceAllString(text, "")
+		text = strings.TrimSpace(text)
+		if text == before {
+			break
+		}
+	}
+	return text
+}
+
 func cleanPublicResearchText(query string, text string) string {
 	text = stripEvidenceLines(text)
 	text = stripPageChrome(text)
@@ -1298,6 +1321,7 @@ func cleanPublicResearchText(query string, text string) string {
 		return ""
 	}
 	best = trimBeforePublicCoreTerm(query, best)
+	best = stripLeadingPublicChrome(best)
 	if len([]rune(best)) > 420 {
 		runes := []rune(best)
 		best = string(runes[:420])
@@ -1780,7 +1804,7 @@ func formatCitations(citations []retriever.Citation) string {
 
 		b.WriteString(fmt.Sprintf("- %s\n", path))
 		written++
-		if written >= 5 {
+		if written >= 2 {
 			break
 		}
 	}

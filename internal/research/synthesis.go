@@ -1,6 +1,9 @@
 package research
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // CanonicalAnswer turns retrieved evidence into a direct answer by selecting the
 // best-supported sentence: the one whose tokens overlap most with the query.
@@ -46,6 +49,7 @@ func CanonicalAnswer(query string, evidence []string) (string, bool) {
 	}
 
 	best = trimBeforeCoreTerm(query, best)
+	best = stripLeadingChrome(best)
 	best = tidyProse(best)
 	if len([]rune(best)) > 420 {
 		runes := []rune(best)
@@ -103,6 +107,33 @@ func definitionBonus(isDefinitionQuery bool, sentence string) float64 {
 		}
 	}
 	return 0
+}
+
+// Leading-chrome strippers: a publication date ("3 jun 2023 · "), a numeric date
+// ("15/07/2024 - "), or a run of separator/quote punctuation that HTML
+// extraction prepends to the lead sentence. Calendar and punctuation structure,
+// not domain facts.
+var (
+	leadingSepRe     = regexp.MustCompile(`^[\s"'` + "`" + `·•‹›«»>|–—,;:.\-]+`)
+	leadingDateRe    = regexp.MustCompile(`(?i)^\s*\d{1,2}\s+(?:ene|feb|mar|abr|may|jun|jul|ago|sep|sept|oct|nov|dic|jan|apr|aug|dec)\w*\.?\s+\d{4}\b`)
+	leadingNumDateRe = regexp.MustCompile(`^\s*\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}\b`)
+)
+
+// stripLeadingChrome removes a date byline or separator junk from the START of
+// an answer sentence, looping until nothing more peels off ("3 jun 2023 · Una
+// integral…" -> "Una integral…").
+func stripLeadingChrome(text string) string {
+	for {
+		before := text
+		text = leadingDateRe.ReplaceAllString(text, "")
+		text = leadingNumDateRe.ReplaceAllString(text, "")
+		text = leadingSepRe.ReplaceAllString(text, "")
+		text = strings.TrimSpace(text)
+		if text == before {
+			break
+		}
+	}
+	return text
 }
 
 // tidyProse repairs the cosmetic damage HTML extraction leaves behind: stray
