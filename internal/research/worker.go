@@ -409,7 +409,11 @@ func isCaptionLead(text string) bool {
 // (quotes, ">", "|", bullets) so page chrome glued onto a run-on snippet — an
 // author byline, a publication date, a "Foo: Diferencias…" header — lands in
 // its own low-overlap fragment and loses to the real answer fragment.
-var sentenceSplitRe = regexp.MustCompile(`[.!?:]\s+|\n+|["|•›»·>]`)
+// Split on sentence terminators, newlines (structure), and genuine list/nav
+// separators. Quotes and ">" are NOT split anymore: structured extraction now
+// strips HTML chrome, so a quote in the text is real content (e.g. «hablar»)
+// and must not cut the sentence.
+var sentenceSplitRe = regexp.MustCompile(`[.!?:]\s+|\n+|[|•›»·]`)
 
 func splitSentences(text string) []string {
 	parts := sentenceSplitRe.Split(text, -1)
