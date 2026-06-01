@@ -44,6 +44,10 @@ type Options struct {
 	RouterCheckpoint string
 	Router           router.Router
 	KnowledgePath    string
+	// AdminToken, when set, enables the token-gated /v1/aletheia/admin/* endpoints
+	// that drive the self-improvement pipeline (seed -> harvest -> train) over
+	// HTTP, for VPS deployments without easy shell access. Empty = disabled.
+	AdminToken string
 }
 
 type Server struct {
@@ -63,6 +67,7 @@ type Server struct {
 	chats        atomic.Uint64
 	queued       atomic.Uint64
 	experts      map[string]*atomic.Uint64
+	adminState   *adminPipeline
 }
 
 // expertNames are the sparse capability "experts": exactly one handles each chat
@@ -145,6 +150,7 @@ func New(opts Options) (*Server, error) {
 		retriever:    retriever.NewRetriever(opts.Store),
 		created:      time.Now().Unix(),
 		experts:      map[string]*atomic.Uint64{},
+		adminState:   newAdminPipeline(),
 	}
 	for _, name := range expertNames {
 		s.experts[name] = &atomic.Uint64{}
@@ -223,6 +229,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/aletheia/research", s.withAuth(s.handleResearch))
 	mux.HandleFunc("GET /v1/aletheia/research/", s.withAuth(s.handleResearchStatus))
 	mux.HandleFunc("GET /v1/aletheia/jobs", s.withAuth(s.handleJobs))
+	// Admin pipeline (seed -> harvest -> train). Self-gated by X-Admin-Token;
+	// inert unless ALETHEIA_ADMIN_TOKEN is configured.
+	mux.HandleFunc("POST /v1/aletheia/admin/pipeline", s.handleAdminPipeline)
+	mux.HandleFunc("GET /v1/aletheia/admin/pipeline", s.handleAdminStatus)
 	return mux
 }
 

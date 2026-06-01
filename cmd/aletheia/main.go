@@ -17,6 +17,7 @@ import (
 	"aletheia/internal/config"
 	"aletheia/internal/datasetbuilder"
 	"aletheia/internal/eval"
+	"aletheia/internal/harvest"
 	"aletheia/internal/learning"
 	"aletheia/internal/memory"
 	"aletheia/internal/model"
@@ -268,7 +269,7 @@ func runDatasetHarvest(args []string) error {
 	if err := store.Migrate(context.Background()); err != nil {
 		return err
 	}
-	n, err := learning.HarvestChatDataset(context.Background(), store, *out, *minConf)
+	n, err := harvest.HarvestChatDataset(context.Background(), store, *out, *minConf)
 	if err != nil {
 		return err
 	}
@@ -1004,6 +1005,7 @@ func runServe(args []string) error {
 	routerCheckpoint := fs.String("router-checkpoint", envDefault("ALETHEIA_ROUTER_CHECKPOINT", "checkpoints/router-mikros"), "optional Mikros router checkpoint directory")
 	knowledgePath := fs.String("knowledge", envDefault("ALETHEIA_KNOWLEDGE", apiserver.DefaultKnowledgePath), "local knowledge corpus directory indexed for retrieval")
 	apiKey := fs.String("api-key", os.Getenv("ALETHEIA_API_KEY"), "Bearer API key for /v1/* endpoints")
+	adminToken := fs.String("admin-token", os.Getenv("ALETHEIA_ADMIN_TOKEN"), "token enabling /v1/aletheia/admin/* pipeline endpoints (empty = disabled)")
 	auth := fs.String("auth", envDefault("ALETHEIA_AUTH", "bearer"), "authentication mode: bearer or none")
 	maxBodyBytes := fs.Int64("max-body-bytes", apiserver.DefaultMaxBodyBytes, "maximum JSON request body size")
 	if err := fs.Parse(args); err != nil {
@@ -1036,6 +1038,7 @@ func runServe(args []string) error {
 		Research:         researchOptionsFromConfig(cfg),
 		RouterCheckpoint: *routerCheckpoint,
 		KnowledgePath:    *knowledgePath,
+		AdminToken:       *adminToken,
 	})
 	if err != nil {
 		return err
