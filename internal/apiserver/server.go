@@ -552,7 +552,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			researchMode = strings.TrimSpace(req.Aletheia.Research)
 		}
 		if shouldResearch(query, researchMode, s.research) {
-
+			// Streaming clients get the agentic experience: narrate each search
+			// round live and refine until it converges. Falls through to the
+			// sync path if streaming isn't available.
+			if req.Stream && s.streamAgenticResearch(w, r, responseModelID(req.Model, served.ID), query) {
+				return
+			}
 			researchAnswer, jobID, ok := s.researchSyncFirst(r.Context(), query)
 			if ok {
 				s.expert("research_verified")
