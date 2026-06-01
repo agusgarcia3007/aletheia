@@ -405,7 +405,7 @@ func isCaptionLead(text string) bool {
 // (quotes, ">", "|", bullets) so page chrome glued onto a run-on snippet — an
 // author byline, a publication date, a "Foo: Diferencias…" header — lands in
 // its own low-overlap fragment and loses to the real answer fragment.
-var sentenceSplitRe = regexp.MustCompile(`[.!?:]\s+|["|•›»>]`)
+var sentenceSplitRe = regexp.MustCompile(`[.!?:]\s+|["|•›»·>]`)
 
 func splitSentences(text string) []string {
 	parts := sentenceSplitRe.Split(text, -1)

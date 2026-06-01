@@ -256,6 +256,22 @@ func TestCanonicalAnswerPrefersDefinitionForWhatIsQuery(t *testing.T) {
 	}
 }
 
+// A leading "<date> · " byline must not survive into the answer.
+func TestCanonicalAnswerStripsMiddotDatePrefix(t *testing.T) {
+	answer, ok := CanonicalAnswer("que es una integral", []string{
+		"3 jun 2023 · Una integral definida es un calculo de cuanto de algo se acumula durante un intervalo de tiempo.",
+	})
+	if !ok {
+		t.Fatal("expected an answer, got abstain")
+	}
+	if strings.Contains(answer, "2023") || strings.Contains(answer, "·") {
+		t.Fatalf("date byline leaked into answer: %q", answer)
+	}
+	if !strings.Contains(answer, "integral definida es un calculo") {
+		t.Fatalf("answer lost its substance: %q", answer)
+	}
+}
+
 func TestCanonicalAnswerCleansTruncatedProse(t *testing.T) {
 	answer, ok := CanonicalAnswer("que es la fotosintesis", []string{
 		"La fotosintesis es un proceso quimico que convierte materia inorganica en materia organica gracias a la energia que ...",
