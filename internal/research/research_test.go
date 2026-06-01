@@ -242,6 +242,24 @@ func TestCanonicalAnswerPicksMostSupportedSentence(t *testing.T) {
 	}
 }
 
+func TestCanonicalAnswerCleansTruncatedProse(t *testing.T) {
+	answer, ok := CanonicalAnswer("que es la fotosintesis", []string{
+		"La fotosintesis es un proceso quimico que convierte materia inorganica en materia organica gracias a la energia que ...",
+	})
+	if !ok {
+		t.Fatal("expected an answer, got abstain")
+	}
+	if strings.Contains(answer, "...") || strings.Contains(answer, "…") {
+		t.Fatalf("answer still carries a truncated tail: %q", answer)
+	}
+	if strings.HasSuffix(strings.TrimSuffix(answer, "."), " que") {
+		t.Fatalf("answer ends with a dangling connector: %q", answer)
+	}
+	if !strings.Contains(answer, "proceso quimico") {
+		t.Fatalf("answer lost its substance: %q", answer)
+	}
+}
+
 func TestCanonicalAnswerAbstainsWithoutSupport(t *testing.T) {
 	if answer, ok := CanonicalAnswer("quien gano la copa america 2024", []string{
 		"Las entradas para el proximo concierto ya estan a la venta.",

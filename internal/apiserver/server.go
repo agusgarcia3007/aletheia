@@ -500,9 +500,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		answer, err := s.retriever.Answer(r.Context(), query, retriever.SearchOptions{TopK: 5, MinConfidence: retriever.DefaultMinConfidence})
-		if err == nil && answer.Verified {
+		if err == nil && answer.Verified && answerRelevantToQuery(query, answer.Text) {
 			s.expert("memory_verified")
-			respond(s.chatResponse(responseModelID(req.Model, served.ID), answer.Text+"\n\n"+formatCitations(answer.Citations), s.textUsage(prompt, answer.Text)))
+			text := answer.Text
+			if cites := formatCitations(answer.Citations); cites != "" {
+				text += "\n\n" + cites
+			}
+			respond(s.chatResponse(responseModelID(req.Model, served.ID), text, s.textUsage(prompt, answer.Text)))
 			return
 		}
 		researchMode := "background"
@@ -510,9 +514,17 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			researchMode = strings.TrimSpace(req.Aletheia.Research)
 		}
 		if shouldResearch(query, researchMode, s.research) {
-			job, err := s.enqueueResearch(r.Context(), query, researchMode, 0)
-			if err == nil {
-				content := fmt.Sprintf("No tengo evidencia local suficiente. Inicié una investigación en background con job_id=%s. Consultá el resultado en unos segundos o repetí la pregunta luego.", job.ID)
+			// Sync-first: try to answer in this same turn instead of returning a
+			// job_id and forcing a second round-trip. Falls back to a background
+			// job (and a stub) only when it can't beat the latency cap.
+			researchAnswer, jobID, ok := s.researchSyncFirst(r.Context(), query)
+			if ok {
+				s.expert("research_verified")
+				respond(s.chatResponse(responseModelID(req.Model, served.ID), researchAnswer, s.textUsage(prompt, researchAnswer)))
+				return
+			}
+			if jobID != "" {
+				content := fmt.Sprintf("Estoy buscando evidencia para responderte (job_id=%s). Volvé a preguntar en unos segundos y te respondo desde lo que encuentre.", jobID)
 				s.expert("research_learn")
 				respond(s.chatResponse(responseModelID(req.Model, served.ID), content, s.textUsage(prompt, content)))
 				return
@@ -1088,6 +1100,65 @@ func (s *Server) completedResearchAnswer(ctx context.Context, query string) (str
 		return answer, true
 	}
 	return "", false
+}
+
+// answerRelevantToQuery guards the retriever path against cross-topic
+// contamination: stored web chunks from an earlier question (e.g. "qué es
+// HTTP") must not be served verbatim for an unrelated one (e.g. "TCP vs UDP")
+// just because the text-evidence verifier finds the sentence supported by its
+// own citation. The answer has to actually share meaningful tokens with the
+// query, or we fall through to fresh research.
+func answerRelevantToQuery(query string, answer string) bool {
+	queryTokens := meaningfulChatTokens(query)
+	if len(queryTokens) == 0 {
+		return true
+	}
+	return meaningfulOverlap(queryTokens, meaningfulChatTokens(answer)) >= requiredMeaningfulOverlap(len(queryTokens))
+}
+
+// researchSyncFirst runs a research job inline, bounded by a short latency cap,
+// so a knowledge-gap question can be answered in the same turn. On success it
+// returns the formatted answer. If it can't finish in time it re-queues the job
+// for the background worker and returns the job ID for a "ask again" stub, so
+// the next ask is served instantly from memory (the corpus grows by use).
+func (s *Server) researchSyncFirst(ctx context.Context, query string) (string, string, bool) {
+	if s.store == nil || !s.research.Enabled {
+		return "", "", false
+	}
+	job, err := s.store.CreateResearchJob(ctx, memory.ResearchJob{
+		Query:      query,
+		Status:     "running",
+		Mode:       "sync",
+		MaxSources: s.research.MaxSources,
+	})
+	if err != nil {
+		return "", "", false
+	}
+	wait := 8 * time.Second
+	if jt := s.research.JobTimeout; jt > 0 && jt < wait {
+		wait = jt
+	}
+	runCtx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	worker := research.NewWorker(s.store, s.research)
+	result, err := worker.RunJob(runCtx, job)
+	if err != nil {
+		// Didn't beat the cap — hand it to the background worker to finish.
+		job.Status = "queued"
+		_ = s.store.UpdateResearchJob(context.Background(), job)
+		s.queued.Add(1)
+		return "", job.ID, false
+	}
+	job.Answer = result.Answer
+	job.Confidence = result.Confidence
+	job.Status = "completed"
+	sources, _ := s.store.WebSourcesByJob(ctx, job.ID)
+	claims, _ := s.store.WebClaimsByJob(ctx, job.ID)
+	formatted, ok := formatResearchAnswer(query, job, sources, claims)
+	if !ok {
+		return "", job.ID, false
+	}
+	return formatted, job.ID, true
 }
 
 func formatResearchAnswer(query string, job memory.ResearchJob, sources []memory.WebSource, claims []memory.WebClaim) (string, bool) {
@@ -1671,8 +1742,25 @@ func formatCitations(citations []retriever.Citation) string {
 	}
 	var b strings.Builder
 	b.WriteString("Fuentes:\n")
+	seen := map[string]bool{}
+	written := 0
 	for _, citation := range citations {
-		b.WriteString(fmt.Sprintf("- %s chunk=%d score=%.4f\n", citation.Path, citation.ChunkID, citation.Score))
+		path := strings.TrimSpace(citation.Path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		// User-facing sources only: chunk IDs and similarity scores are
+		// internal retrieval debug and must never leak into a chat response
+		// (principle: zero raw-chunk leakage).
+		b.WriteString(fmt.Sprintf("- %s\n", path))
+		written++
+		if written >= 5 {
+			break
+		}
+	}
+	if written == 0 {
+		return ""
 	}
 	return strings.TrimSpace(b.String())
 }
